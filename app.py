@@ -7,7 +7,7 @@ st.set_page_config(page_title="Almacén Minero Pro", layout="wide")
 
 # 2. CONFIGURACIÓN DE URL Y CONEXIÓN
 # He quitado el /edit para que sea una ruta de datos limpia
-URL_DB = "https://docs.google.com/spreadsheets/d/1b0uag9fLLkDCaOMaFlNIOc3oXTwJ3KKZzWSqR9K5x98/edit"
+URL_DB = "https://docs.google.com/spreadsheets/d/1b0uag9fLLkDCaOMaFlNIOc3oXTwJ3KKZzWSqR9K5x98/export?format=csv"
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -36,7 +36,7 @@ if opcion == "Registrar Nuevo Artículo":
 # --- MODULO 2: PANEL DE STOCK ---
 elif opcion == "Panel de Stock":
     st.header("📊 Inventario Real")
-    df = conn.read(spreadsheet=URL_DB, worksheet="Articulos")
+    df = conn.read(spreadsheet=URL_DB)
     st.dataframe(df, use_container_width=True)
 
 # --- MODULO 3: ENTRADAS (SUMA) ---
