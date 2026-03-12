@@ -70,7 +70,7 @@ elif opcion == "Salidas (Vales)":
             idx = df_art[df_art['Nombre'] == art].index[0]
             if df_art.at[idx, 'Stock_Actual'] >= cant:
                 df_art.at[idx, 'Stock_Actual'] -= cant
-                nueva = pd.DataFrame([{"Fecha":"Hoy", "Vale":vale, "Trabajador":tra, "Codigo":df_art.at[idx, 'Codigo'], "Cantidad":cant}])
+                nueva = pd.DataFrame([{"Fecha":"Hoy", "Vale":vale, "Trabajador":tra, "Codigo":df_art.at[idx, 'Codigo'], "Cantidad":cant, "Usuario":"SISTEMA"}])
                 conn.update(spreadsheet=URL_DB, worksheet="Articulos", data=df_art)
                 conn.update(spreadsheet=URL_DB, worksheet="Salidas", data=pd.concat([df_sal, nueva]))
                 st.success("Despachado")
