@@ -7,7 +7,7 @@ st.set_page_config(page_title="Almacén Minero Pro", layout="wide")
 
 # 2. CONEXIÓN (IMPORTANTE: Cambia la URL por la tuya)
 conn = st.connection("gsheets", type=GSheetsConnection)
-URL_DB = "TU_URL_DE_GOOGLE_SHEETS_AQUI"
+URL_DB = "https://docs.google.com/spreadsheets/d/1b0uag9fLLkDcaOMaFlNI0c3oXTwJ3KKZzWSqR9K5x98/edit"
 
 # --- MENÚ LATERAL ---
 st.sidebar.title("MENU PRINCIPAL")
