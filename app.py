@@ -7,8 +7,7 @@ st.set_page_config(page_title="Almacén Minero Pro", layout="wide")
 
 # 2. CONEXIÓN (IMPORTANTE: Cambia la URL por la tuya)
 conn = st.connection("gsheets", type=GSheetsConnection)
-URL_DB = "https://docs.google.com/spreadsheets/d/1b0uag9fLLkDCaOMaFlNIOc3oXTwJ3KKZzWSqR9K5x98/gviz/tq?tqx=out:csv&sheet=Articulos"
-
+URL_DB = "https://docs.google.com/spreadsheets/d/1b0uag9fLLkDCaOMaFlNIOc3oXTwJ3KKZzWSqR9K5x98/edit"
 # --- MENÚ LATERAL ---
 st.sidebar.title("MENU PRINCIPAL")
 opcion = st.sidebar.radio("Seleccione Módulo:", ["Panel de Stock", "Registrar Nuevo Artículo", "Entradas (OC)", "Salidas (Vales)"])
