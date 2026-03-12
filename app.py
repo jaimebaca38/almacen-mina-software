@@ -18,7 +18,7 @@ opcion = st.sidebar.radio("Seleccione Módulo:", ["Panel de Stock", "Registrar N
 # --- MODULO 1: REGISTRO (EVITA DUPLICADOS) ---
 if opcion == "Registrar Nuevo Artículo":
     st.header("📝 Catálogo de Artículos")
-    df_art = conn.read(spreadsheet=URL_DB, worksheet="Articulos")
+    df_art = conn.read(spreadsheet=URL_DB)
     with st.form("reg"):
         c1, c2 = st.columns(2)
         cod = c1.text_input("Código").strip().upper()
@@ -42,8 +42,8 @@ elif opcion == "Panel de Stock":
 # --- MODULO 3: ENTRADAS (SUMA) ---
 elif opcion == "Entradas (OC)":
     st.header("🚚 Ingreso por OC")
-    df_art = conn.read(spreadsheet=URL_DB, worksheet="Articulos")
-    df_ent = conn.read(spreadsheet=URL_DB, worksheet="Entradas")
+    df_art = conn.read(spreadsheet=URL_DB)
+    df_ent = conn.read(spreadsheet=URL_DB + "&sheet=Entradas")
     with st.form("ent"):
         oc = st.text_input("OC").upper()
         art = st.selectbox("Artículo", df_art['Nombre'].tolist())
@@ -59,8 +59,8 @@ elif opcion == "Entradas (OC)":
 # --- MODULO 4: SALIDAS (RESTA) ---
 elif opcion == "Salidas (Vales)":
     st.header("📋 Salida por Vale")
-    df_art = conn.read(spreadsheet=URL_DB, worksheet="Articulos")
-    df_sal = conn.read(spreadsheet=URL_DB, worksheet="Salidas")
+    df_art = conn.read(spreadsheet=URL_DB)
+    df_sal = conn.read(spreadsheet=URL_DB + "&sheet=Salidas")
     with st.form("sal"):
         vale = st.text_input("Vale").upper()
         tra = st.text_input("Trabajador").upper()
