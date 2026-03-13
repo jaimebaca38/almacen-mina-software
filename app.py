@@ -7,8 +7,7 @@ st.set_page_config(page_title="Almacén Minero Pro", layout="wide")
 
 # 2. CONFIGURACIÓN DE URL Y CONEXIÓN
 # He quitado el /edit para que sea una ruta de datos limpia
-URL_DB = "https://docs.google.com/spreadsheets/d/1b0uag9fLLkDCaOMaFlNIOc3oXTwJ3KKZzWSqR9K5x98/export?format=csv"
-
+URL_DB = "https://docs.google.com/spreadsheets/d/1b0uag9fLLkDCaOMaFlNIOc3oXTwJ3KKZzWSqR9K5x98/edit"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- MENÚ LATERAL ---
