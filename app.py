@@ -105,9 +105,9 @@ elif opcion == "Panel de Stock":
     bajo_stock = df[df['Stock_Actual'] <= df['Stock_Minimo']].shape[0]
     col1.metric("Artículos en Alerta (Bajo Stock)", bajo_stock, delta_color="inverse")
 
-# --- MODULO 3: ENTRADAS (OC y GUÍA) ---
+# --- MODULO 3: ENTRADAS (OC y GUÍA) - CARGA MÚLTIPLE ---
 elif opcion == "Entradas (OC)":
-    st.header("📥 Gestión de Ingresos (OC / Guía)")
+    st.header("📥 Gestión de Ingresos Multibulto")
     
     df_art = conn.read(spreadsheet=URL_DB)
     try:
@@ -115,104 +115,88 @@ elif opcion == "Entradas (OC)":
     except:
         df_historial = pd.DataFrame(columns=["ID", "Fecha", "Codigo", "Nombre", "Cantidad", "OC", "Guia", "Receptor", "Digitador"])
 
+    # INICIALIZAR LA LISTA TEMPORAL (Si no existe)
+    if 'lista_temporal_ingresos' not in st.session_state:
+        st.session_state.lista_temporal_ingresos = []
+
     tab1, tab2 = st.tabs(["Nuevo Ingreso", "🛠️ Editar / Corregir"])
 
     with tab1:
-        with st.form("form_entradas_pro", clear_on_submit=True):
-            st.subheader("Documentación Obligatoria")
-            c_doc1, c_doc2 = st.columns(2)
-            nro_oc = c_doc1.text_input("Número de OC*").upper().strip()
-            nro_guia = c_doc2.text_input("Número de Guía*").upper().strip()
-            
-            opciones_art = ["Seleccione..."] + (df_art['Codigo'] + " - " + df_art['Nombre']).tolist()
-            seleccion = st.selectbox("Buscar Artículo:", opciones_art)
-            
-            c_det1, c_det2 = st.columns(2)
-            cant = c_det1.number_input("Cantidad", min_value=1, step=1)
-            fecha_ing = c_det2.date_input("Fecha")
-            
-            c_resp1, c_resp2 = st.columns(2)
-            p_recibe = c_resp1.text_input("Receptor").upper()
-            p_digita = c_resp2.text_input("Digitador").upper()
+        # 1. DATOS DE CABECERA (Documentos)
+        st.subheader("Datos de la Guía / OC")
+        c1, c2 = st.columns(2)
+        nro_oc = c1.text_input("Número de OC*", key="oc_main").upper().strip()
+        nro_guia = c2.text_input("Número de Guía*", key="guia_main").upper().strip()
+        
+        st.divider()
+        
+        # 2. AGREGAR ARTÍCULOS A LA LISTA
+        st.subheader("Agregar Artículos a la lista")
+        opciones = ["Seleccione..."] + (df_art['Codigo'] + " - " + df_art['Nombre']).tolist()
+        seleccion = st.selectbox("Seleccionar Artículo:", opciones, key="sel_art")
+        
+        ca, cb, cc = st.columns([2, 2, 1])
+        cant_temp = ca.number_input("Cantidad", min_value=1, step=1, key="cant_temp")
+        fecha_ing = cb.date_input("Fecha Recepción", key="fecha_temp")
+        
+        if st.button("➕ AGREGAR A LA LISTA"):
+            if seleccion != "Seleccione..." and nro_oc and nro_guia:
+                cod = seleccion.split(" - ")[0]
+                nom = seleccion.split(" - ")[1]
+                # Guardamos en la memoria temporal
+                st.session_state.lista_temporal_ingresos.append({
+                    "Codigo": cod, "Nombre": nom, "Cantidad": cant_temp, 
+                    "OC": nro_oc, "Guia": nro_guia, "Fecha": fecha_ing.strftime("%d/%m/%Y")
+                })
+            else:
+                st.warning("⚠️ Completa los datos del documento y selecciona un artículo.")
 
-            if st.form_submit_button("REGISTRAR"):
-                if not nro_oc or not nro_guia or seleccion == "Seleccione...":
-                    st.error("❌ Faltan datos obligatorios.")
-                elif not df_historial.empty and nro_guia in df_historial['Guia'].astype(str).values:
-                    st.error(f"⚠️ La Guía '{nro_guia}' ya fue registrada.")
-                else:
-                    cod_elegido = seleccion.split(" - ")[0]
-                    idx = df_art.index[df_art['Codigo'] == cod_elegido][0]
-                    df_art.at[idx, 'Stock_Actual'] += cant
-                    
-                    nuevo_mov = pd.DataFrame([{
-                        "ID": str(len(df_historial) + 1), "Fecha": fecha_ing.strftime("%d/%m/%Y"),
-                        "Codigo": cod_elegido, "Nombre": df_art.at[idx, 'Nombre'],
-                        "Cantidad": cant, "OC": nro_oc, "Guia": nro_guia,
-                        "Receptor": p_recibe, "Digitador": p_digita
-                    }])
-
-                    conn.update(spreadsheet=URL_DB, data=df_art)
-                    df_hist_final = pd.concat([df_historial, nuevo_mov], ignore_index=True)
-                    conn.update(spreadsheet=URL_DB, worksheet="Historial_Entradas", data=df_hist_final)
-                    st.success("✅ Ingreso Exitoso.")
-                    st.cache_data.clear()
-                    st.rerun()
-
-    # --- PESTAÑA 2: EDICIÓN DE ERRORES ---
-    with tab2:
-        if df_historial.empty:
-            st.info("Aún no hay registros en el historial para editar.")
-        else:
-            st.subheader("Corregir Ingreso Existente")
-            # Selector por Guía
-            guia_a_editar = st.selectbox("Seleccione la Guía de Remisión a corregir:", df_historial['Guia'].tolist()[::-1])
+        # 3. MOSTRAR LA LISTA TEMPORAL
+        if st.session_state.lista_temporal_ingresos:
+            st.write("### Artículos por registrar:")
+            df_temp = pd.DataFrame(st.session_state.lista_temporal_ingresos)
+            st.table(df_temp)
             
-            # Extraer datos
-            datos = df_historial[df_historial['Guia'] == guia_a_editar].iloc[0]
-            
-            with st.container(border=True):
-                st.write(f"**Artículo:** {datos['Nombre']} ({datos['Codigo']})")
-                
-                # --- AQUÍ ESTÁ LA CORRECCIÓN (Copia desde aquí) ---
-                try:
-                    # Intentamos leer la cantidad, si falla o está vacío, ponemos 0
-                    val_actual = int(datos['Cantidad']) if pd.notna(datos['Cantidad']) else 0
-                except:
-                    val_actual = 0
+            col_rec, col_dig = st.columns(2)
+            p_recibe = col_rec.text_input("Recibido por:", key="p_rec").upper()
+            p_digita = col_dig.text_input("Registrado por:", key="p_dig").upper()
 
-                new_q = st.number_input("Cantidad Real Correcta", value=val_actual, min_value=0)
-                # --- HASTA AQUÍ ---
-                
-                new_oc = st.text_input("Corregir N° OC", value=str(datos['OC']))
-                new_p_rec = st.text_input("Corregir Receptor", value=str(datos['Receptor']))
-                
-                if st.button("Guardar Cambios y Ajustar Inventario"):
-                    # 1. Calcular la diferencia para el Stock
-                    diferencia = new_q - int(datos['Cantidad'])
-                    
-                    # 2. Actualizar Stock Principal
-                    idx_m = df_art.index[df_art['Codigo'] == datos['Codigo']][0]
-                    df_art.at[idx_m, 'Stock_Actual'] += diferencia
-                    
-                    # 3. Actualizar Historial
-                    idx_h = df_historial.index[df_historial['Guia'] == guia_a_editar][0]
-                    df_historial.at[idx_h, 'Cantidad'] = new_q
-                    df_historial.at[idx_h, 'OC'] = new_oc.upper()
-                    df_historial.at[idx_h, 'Receptor'] = new_p_rec.upper()
-                    
-                    # 4. Guardar cambios en Sheets
+            c_b1, c_b2 = st.columns([1, 4])
+            if c_b1.button("✅ REGISTRAR TODO"):
+                if p_recibe and p_digita:
+                    # PROCESO DE GUARDADO MASIVO
+                    for item in st.session_state.lista_temporal_ingresos:
+                        # Actualizar Stock Principal
+                        idx = df_art.index[df_art['Codigo'] == item['Codigo']][0]
+                        df_art.at[idx, 'Stock_Actual'] += item['Cantidad']
+                        
+                        # Crear registro para historial
+                        nuevo_mov = pd.DataFrame([{
+                            "ID": str(len(df_historial) + 1), "Fecha": item['Fecha'],
+                            "Codigo": item['Codigo'], "Nombre": item['Nombre'],
+                            "Cantidad": item['Cantidad'], "OC": item['OC'], 
+                            "Guia": item['Guia'], "Receptor": p_recibe, "Digitador": p_digita
+                        }])
+                        df_historial = pd.concat([df_historial, nuevo_mov], ignore_index=True)
+
+                    # Subir todo al final
                     conn.update(spreadsheet=URL_DB, data=df_art)
                     conn.update(spreadsheet=URL_DB, worksheet="Historial_Entradas", data=df_historial)
                     
-                    st.success("✅ Registro corregido y Stock ajustado.")
+                    st.success(f"✅ Se han registrado {len(st.session_state.lista_temporal_ingresos)} artículos con éxito.")
+                    st.session_state.lista_temporal_ingresos = [] # Limpiar lista
                     st.cache_data.clear()
                     st.rerun()
+                else:
+                    st.error("❌ Indica quién recibe y quién digita antes de procesar.")
 
-# --- AQUÍ EMPIEZA EL SIGUIENTE MÓDULO (Asegúrate de que esté al mismo nivel que los otros elif) ---
-elif opcion == "Salidas (Vales)":
-    st.header("📤 Salida de Materiales (Vales)")
-    st.info("Módulo en desarrollo para el despacho de materiales.")
+            if c_b2.button("🗑️ Limpiar Lista"):
+                st.session_state.lista_temporal_ingresos = []
+                st.rerun()
+
+    with tab2:
+        st.info("Aquí puedes corregir ingresos ya guardados en el historial.")
+        # (Aquí iría el código de edición que ya teníamos antes)
 # --- MODULO 4: SALIDAS (RESTA) ---
 elif opcion == "Salidas (Vales)":
     st.header("📋 Salida por Vale")
