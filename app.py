@@ -188,7 +188,31 @@ elif opcion == "Entradas (OC)":
                 new_p_rec = st.text_input("Corregir Receptor", value=str(datos['Receptor']))
                 
                 if st.button("Guardar Cambios y Ajustar Inventario"):
-                    # ... (el resto del código de guardado que ya tenías)
+                    # 1. Calcular la diferencia para el Stock
+                    diferencia = new_q - int(datos['Cantidad'])
+                    
+                    # 2. Actualizar Stock Principal
+                    idx_m = df_art.index[df_art['Codigo'] == datos['Codigo']][0]
+                    df_art.at[idx_m, 'Stock_Actual'] += diferencia
+                    
+                    # 3. Actualizar Historial
+                    idx_h = df_historial.index[df_historial['Guia'] == guia_a_editar][0]
+                    df_historial.at[idx_h, 'Cantidad'] = new_q
+                    df_historial.at[idx_h, 'OC'] = new_oc.upper()
+                    df_historial.at[idx_h, 'Receptor'] = new_p_rec.upper()
+                    
+                    # 4. Guardar cambios en Sheets
+                    conn.update(spreadsheet=URL_DB, data=df_art)
+                    conn.update(spreadsheet=URL_DB, worksheet="Historial_Entradas", data=df_historial)
+                    
+                    st.success("✅ Registro corregido y Stock ajustado.")
+                    st.cache_data.clear()
+                    st.rerun()
+
+# --- AQUÍ EMPIEZA EL SIGUIENTE MÓDULO (Asegúrate de que esté al mismo nivel que los otros elif) ---
+elif opcion == "Salidas (Vales)":
+    st.header("📤 Salida de Materiales (Vales)")
+    st.info("Módulo en desarrollo para el despacho de materiales.")
 # --- MODULO 4: SALIDAS (RESTA) ---
 elif opcion == "Salidas (Vales)":
     st.header("📋 Salida por Vale")
