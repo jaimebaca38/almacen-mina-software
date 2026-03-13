@@ -14,44 +14,65 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 st.sidebar.title("MENU PRINCIPAL")
 opcion = st.sidebar.radio("Seleccione Módulo:", ["Panel de Stock", "Registrar Nuevo Artículo", "Entradas (OC)", "Salidas (Vales)"])
 
-# --- MODULO 1: REGISTRO (CON VALIDACIÓN DE DUPLICADOS) ---
+# --- MODULO 1: REGISTRO PROFESIONAL ---
 if opcion == "Registrar Nuevo Artículo":
     st.header("📝 Catálogo de Artículos")
+    
+    # Leemos la base de datos actual
     df_art = conn.read(spreadsheet=URL_DB)
     
-    # --- Lógica de Autogeneración de Código ---
-    # Busca el número más alto en los códigos actuales para sugerir el siguiente
+    # 1. Selección de Familia primero para generar el prefijo
+    fam = st.selectbox("Seleccione Familia para el nuevo artículo:", 
+                      ["EPP", "HERRAMIENTAS", "EQUIPOS", "CONSUMIBLES"])
+    
+    # Definimos el prefijo según la familia
+    prefijos = {
+        "EPP": "EPP",
+        "HERRAMIENTAS": "HER",
+        "EQUIPOS": "EQP",
+        "CONSUMIBLES": "CON"
+    }
+    prefijo = prefijos[fam]
+
+    # 2. Lógica de Autogeneración basada en la familia seleccionada
     ultimo_num = 0
     if not df_art.empty and 'Codigo' in df_art.columns:
-        # Intenta extraer números de los códigos existentes (ej: de 'ART005' saca el 5)
-        numeros = df_art['Codigo'].str.extract('(\d+)').astype(float).dropna()
-        if not numeros.empty:
-            ultimo_num = int(numeros.max())
+        # Filtramos solo los códigos que empiecen con el prefijo de la familia actual
+        codigos_familia = df_art[df_art['Codigo'].str.startswith(prefijo, na=False)]
+        if not codigos_familia.empty:
+            # Extraemos el número final del código
+            numeros = codigos_familia['Codigo'].str.extract('(\d+)').astype(float).dropna()
+            if not numeros.empty:
+                ultimo_num = int(numeros.max())
     
-    nuevo_cod_sugerido = f"ART-{ultimo_num + 1:03d}"
+    nuevo_cod_sugerido = f"{prefijo}{ultimo_num + 1:03d}"
 
-    with st.form("reg"):
-        c1, c2 = st.columns(2)
-        # El usuario puede usar el sugerido o escribir uno propio
-        cod = c1.text_input("Código del Artículo", value=nuevo_cod_sugerido).strip().upper()
-        nom = c1.text_input("Nombre del Artículo").strip().upper()
-        fam = c2.selectbox("Familia", ["EPP", "HERRAMIENTAS", "EQUIPOS", "CONSUMIBLES"])
-        minimo = c2.number_input("Stock Mínimo (Alerta)", 0)
+    # 3. Formulario de Registro
+    # Usamos 'key' en los inputs para poder limpiarlos si fuera necesario
+    with st.form("reg_form", clear_on_submit=True):
+        st.info(f"Sugerencia de código para {fam}: **{nuevo_cod_sugerido}**")
         
-        if st.form_submit_button("Guardar en Catálogo"):
-            if nom == "" or cod == "":
-                st.warning("⚠️ El Código y el Nombre son obligatorios.")
+        c1, c2 = st.columns(2)
+        cod = c1.text_input("Confirmar Código", value=nuevo_cod_sugerido).strip().upper()
+        nom = c1.text_input("Nombre del Artículo (Ej: Casco tipo minero)").strip().upper()
+        minimo = c2.number_input("Stock Mínimo de Alerta", min_value=0, value=5)
+        
+        enviar = st.form_submit_button("Guardar en Inventario")
+        
+        if enviar:
+            if nom == "":
+                st.warning("⚠️ Debes ingresar un nombre para el artículo.")
             
-            # --- VALIDACIÓN DE DUPLICADOS ---
+            # VALIDACIÓN ANTI-DUPLICADOS (Para no chancar información)
             elif cod in df_art['Codigo'].astype(str).values:
-                st.error(f"❌ Error: El CÓDIGO '{cod}' ya está en uso. Por favor, usa uno diferente.")
+                st.error(f"❌ El código {cod} ya existe en el sistema. No se puede duplicar.")
             
             elif nom in df_art['Nombre'].astype(str).values:
-                st.error(f"❌ Error: El NOMBRE '{nom}' ya existe. No puedes registrar el mismo artículo dos veces.")
+                st.error(f"❌ Ya existe un artículo con el nombre '{nom}'.")
             
             else:
-                # Si pasa las validaciones, se registra
-                nueva = pd.DataFrame([{
+                # Si todo está bien, creamos la nueva fila
+                nueva_fila = pd.DataFrame([{
                     "Codigo": cod, 
                     "Nombre": nom, 
                     "Familia": fam, 
@@ -59,13 +80,13 @@ if opcion == "Registrar Nuevo Artículo":
                     "Stock_Minimo": minimo
                 }])
                 
-                # Actualizar Google Sheets
-                df_final = pd.concat([df_art, nueva], ignore_index=True)
-                conn.update(spreadsheet=URL_DB, data=df_final)
+                # Unimos y subimos a Google Sheets
+                df_updated = pd.concat([df_art, nueva_fila], ignore_index=True)
+                conn.update(spreadsheet=URL_DB, data=df_updated)
                 
-                st.success(f"✅ ¡Éxito! Articulo '{nom}' registrado con el código {cod}.")
-                st.balloons() # Un toque visual de éxito
-
+                st.success(f"✅ Registrado: {nom} con código {cod}")
+                st.balloons()
+                # Al terminar, Streamlit limpiará el formulario por el parámetro clear_on_submit=True
 # --- MODULO 2: PANEL DE STOCK ---
 elif opcion == "Panel de Stock":
     st.header("📊 Inventario Real")
