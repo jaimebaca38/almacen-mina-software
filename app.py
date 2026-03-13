@@ -105,7 +105,7 @@ elif opcion == "Panel de Stock":
     bajo_stock = df[df['Stock_Actual'] <= df['Stock_Minimo']].shape[0]
     col1.metric("Artículos en Alerta (Bajo Stock)", bajo_stock, delta_color="inverse")
 
-# --- MODULO 3: ENTRADAS (OC y GUÍA) - CARGA MÚLTIPLE ---
+# --- MODULO 3: ENTRADAS (OC y GUÍA) - CARGA MÚLTIPLE BLINDADA ---
 elif opcion == "Entradas (OC)":
     st.header("📥 Gestión de Ingresos Multibulto")
     
@@ -115,22 +115,26 @@ elif opcion == "Entradas (OC)":
     except:
         df_historial = pd.DataFrame(columns=["ID", "Fecha", "Codigo", "Nombre", "Cantidad", "OC", "Guia", "Receptor", "Digitador"])
 
-    # INICIALIZAR LA LISTA TEMPORAL (Si no existe)
     if 'lista_temporal_ingresos' not in st.session_state:
         st.session_state.lista_temporal_ingresos = []
 
     tab1, tab2 = st.tabs(["Nuevo Ingreso", "🛠️ Editar / Corregir"])
 
     with tab1:
-        # 1. DATOS DE CABECERA (Documentos)
         st.subheader("Datos de la Guía / OC")
         c1, c2 = st.columns(2)
+        
+        # Forzamos mayúsculas en los inputs principales
         nro_oc = c1.text_input("Número de OC*", key="oc_main").upper().strip()
         nro_guia = c2.text_input("Número de Guía*", key="guia_main").upper().strip()
         
+        # --- VALIDACIÓN DE GUÍA DUPLICADA EN TIEMPO REAL ---
+        if nro_guia and not df_historial.empty:
+            if nro_guia in df_historial['Guia'].astype(str).values:
+                st.error(f"⚠️ BLOQUEO: La Guía '{nro_guia}' ya existe en el historial. No se permiten duplicados.")
+                st.stop() # Detiene la ejecución de este módulo para evitar errores
+
         st.divider()
-        
-        # 2. AGREGAR ARTÍCULOS A LA LISTA
         st.subheader("Agregar Artículos a la lista")
         opciones = ["Seleccione..."] + (df_art['Codigo'] + " - " + df_art['Nombre']).tolist()
         seleccion = st.selectbox("Seleccionar Artículo:", opciones, key="sel_art")
@@ -143,60 +147,61 @@ elif opcion == "Entradas (OC)":
             if seleccion != "Seleccione..." and nro_oc and nro_guia:
                 cod = seleccion.split(" - ")[0]
                 nom = seleccion.split(" - ")[1]
-                # Guardamos en la memoria temporal
                 st.session_state.lista_temporal_ingresos.append({
-                    "Codigo": cod, "Nombre": nom, "Cantidad": cant_temp, 
-                    "OC": nro_oc, "Guia": nro_guia, "Fecha": fecha_ing.strftime("%d/%m/%Y")
+                    "Codigo": cod, 
+                    "Nombre": nom.upper(), 
+                    "Cantidad": cant_temp, 
+                    "OC": nro_oc.upper(), 
+                    "Guia": nro_guia.upper(), 
+                    "Fecha": fecha_ing.strftime("%d/%m/%Y")
                 })
             else:
                 st.warning("⚠️ Completa los datos del documento y selecciona un artículo.")
 
-        # 3. MOSTRAR LA LISTA TEMPORAL
         if st.session_state.lista_temporal_ingresos:
-            st.write("### Artículos por registrar:")
+            st.write("### Artículos listos para procesar:")
             df_temp = pd.DataFrame(st.session_state.lista_temporal_ingresos)
             st.table(df_temp)
             
             col_rec, col_dig = st.columns(2)
-            p_recibe = col_rec.text_input("Recibido por:", key="p_rec").upper()
-            p_digita = col_dig.text_input("Registrado por:", key="p_dig").upper()
+            # Responsables también en mayúsculas
+            p_recibe = col_rec.text_input("Recibido por (Nombre Completo):", key="p_rec").upper().strip()
+            p_digita = col_dig.text_input("Registrado por:", key="p_dig").upper().strip()
 
             c_b1, c_b2 = st.columns([1, 4])
             if c_b1.button("✅ REGISTRAR TODO"):
                 if p_recibe and p_digita:
-                    # PROCESO DE GUARDADO MASIVO
+                    # PROCESO MASIVO
                     for item in st.session_state.lista_temporal_ingresos:
-                        # Actualizar Stock Principal
                         idx = df_art.index[df_art['Codigo'] == item['Codigo']][0]
                         df_art.at[idx, 'Stock_Actual'] += item['Cantidad']
                         
-                        # Crear registro para historial
                         nuevo_mov = pd.DataFrame([{
-                            "ID": str(len(df_historial) + 1), "Fecha": item['Fecha'],
-                            "Codigo": item['Codigo'], "Nombre": item['Nombre'],
-                            "Cantidad": item['Cantidad'], "OC": item['OC'], 
-                            "Guia": item['Guia'], "Receptor": p_recibe, "Digitador": p_digita
+                            "ID": str(len(df_historial) + 1), 
+                            "Fecha": item['Fecha'],
+                            "Codigo": item['Codigo'], 
+                            "Nombre": item['Nombre'],
+                            "Cantidad": item['Cantidad'], 
+                            "OC": item['OC'], 
+                            "Guia": item['Guia'], 
+                            "Receptor": p_recibe, 
+                            "Digitador": p_digita
                         }])
                         df_historial = pd.concat([df_historial, nuevo_mov], ignore_index=True)
 
-                    # Subir todo al final
                     conn.update(spreadsheet=URL_DB, data=df_art)
                     conn.update(spreadsheet=URL_DB, worksheet="Historial_Entradas", data=df_historial)
                     
-                    st.success(f"✅ Se han registrado {len(st.session_state.lista_temporal_ingresos)} artículos con éxito.")
-                    st.session_state.lista_temporal_ingresos = [] # Limpiar lista
+                    st.success(f"✅ Se registraron {len(st.session_state.lista_temporal_ingresos)} artículos.")
+                    st.session_state.lista_temporal_ingresos = [] 
                     st.cache_data.clear()
                     st.rerun()
                 else:
-                    st.error("❌ Indica quién recibe y quién digita antes de procesar.")
+                    st.error("❌ Los nombres de los responsables son obligatorios.")
 
             if c_b2.button("🗑️ Limpiar Lista"):
                 st.session_state.lista_temporal_ingresos = []
                 st.rerun()
-
-    with tab2:
-        st.info("Aquí puedes corregir ingresos ya guardados en el historial.")
-        # (Aquí iría el código de edición que ya teníamos antes)
 # --- MODULO 4: SALIDAS (RESTA) ---
 elif opcion == "Salidas (Vales)":
     st.header("📋 Salida por Vale")
