@@ -159,26 +159,36 @@ elif opcion == "Entradas (OC)":
                     st.cache_data.clear()
                     st.rerun()
 
+    # --- PESTAÑA 2: EDICIÓN DE ERRORES ---
     with tab2:
-        if not df_historial.empty:
-            guia_edit = st.selectbox("Seleccione Guía para corregir:", df_historial['Guia'].tolist()[::-1])
-            datos = df_historial[df_historial['Guia'] == guia_edit].iloc[0]
+        if df_historial.empty:
+            st.info("Aún no hay registros en el historial para editar.")
+        else:
+            st.subheader("Corregir Ingreso Existente")
+            # Selector por Guía
+            guia_a_editar = st.selectbox("Seleccione la Guía de Remisión a corregir:", df_historial['Guia'].tolist()[::-1])
+            
+            # Extraer datos
+            datos = df_historial[df_historial['Guia'] == guia_a_editar].iloc[0]
             
             with st.container(border=True):
-                new_q = st.number_input("Corregir Cantidad", value=int(datos['Cantidad']))
-                if st.button("Guardar Cambios"):
-                    diff = new_q - int(datos['Cantidad'])
-                    idx_m = df_art.index[df_art['Codigo'] == datos['Codigo']][0]
-                    df_art.at[idx_m, 'Stock_Actual'] += diff
-                    
-                    idx_h = df_historial.index[df_historial['Guia'] == guia_edit][0]
-                    df_historial.at[idx_h, 'Cantidad'] = new_q
-                    
-                    conn.update(spreadsheet=URL_DB, data=df_art)
-                    conn.update(spreadsheet=URL_DB, worksheet="Historial_Entradas", data=df_historial)
-                    st.success("✅ Corregido.")
-                    st.cache_data.clear()
-                    st.rerun()
+                st.write(f"**Artículo:** {datos['Nombre']} ({datos['Codigo']})")
+                
+                # --- AQUÍ ESTÁ LA CORRECCIÓN (Copia desde aquí) ---
+                try:
+                    # Intentamos leer la cantidad, si falla o está vacío, ponemos 0
+                    val_actual = int(datos['Cantidad']) if pd.notna(datos['Cantidad']) else 0
+                except:
+                    val_actual = 0
+
+                new_q = st.number_input("Cantidad Real Correcta", value=val_actual, min_value=0)
+                # --- HASTA AQUÍ ---
+                
+                new_oc = st.text_input("Corregir N° OC", value=str(datos['OC']))
+                new_p_rec = st.text_input("Corregir Receptor", value=str(datos['Receptor']))
+                
+                if st.button("Guardar Cambios y Ajustar Inventario"):
+                    # ... (el resto del código de guardado que ya tenías)
 # --- MODULO 4: SALIDAS (RESTA) ---
 elif opcion == "Salidas (Vales)":
     st.header("📋 Salida por Vale")
