@@ -14,23 +14,57 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 st.sidebar.title("MENU PRINCIPAL")
 opcion = st.sidebar.radio("Seleccione Módulo:", ["Panel de Stock", "Registrar Nuevo Artículo", "Entradas (OC)", "Salidas (Vales)"])
 
-# --- MODULO 1: REGISTRO (EVITA DUPLICADOS) ---
+# --- MODULO 1: REGISTRO (CON VALIDACIÓN DE DUPLICADOS) ---
 if opcion == "Registrar Nuevo Artículo":
     st.header("📝 Catálogo de Artículos")
     df_art = conn.read(spreadsheet=URL_DB)
+    
+    # --- Lógica de Autogeneración de Código ---
+    # Busca el número más alto en los códigos actuales para sugerir el siguiente
+    ultimo_num = 0
+    if not df_art.empty and 'Codigo' in df_art.columns:
+        # Intenta extraer números de los códigos existentes (ej: de 'ART005' saca el 5)
+        numeros = df_art['Codigo'].str.extract('(\d+)').astype(float).dropna()
+        if not numeros.empty:
+            ultimo_num = int(numeros.max())
+    
+    nuevo_cod_sugerido = f"ART-{ultimo_num + 1:03d}"
+
     with st.form("reg"):
         c1, c2 = st.columns(2)
-        cod = c1.text_input("Código").strip().upper()
-        nom = c1.text_input("Nombre").strip().upper()
-        fam = c2.selectbox("Familia", ["EPP", "HERRAMIENTAS", "EQUIPOS"])
-        minimo = c2.number_input("Mínimo", 0)
-        if st.form_submit_button("Guardar"):
-            if nom in df_art['Nombre'].values:
-                st.error("Ese nombre ya existe")
+        # El usuario puede usar el sugerido o escribir uno propio
+        cod = c1.text_input("Código del Artículo", value=nuevo_cod_sugerido).strip().upper()
+        nom = c1.text_input("Nombre del Artículo").strip().upper()
+        fam = c2.selectbox("Familia", ["EPP", "HERRAMIENTAS", "EQUIPOS", "CONSUMIBLES"])
+        minimo = c2.number_input("Stock Mínimo (Alerta)", 0)
+        
+        if st.form_submit_button("Guardar en Catálogo"):
+            if nom == "" or cod == "":
+                st.warning("⚠️ El Código y el Nombre son obligatorios.")
+            
+            # --- VALIDACIÓN DE DUPLICADOS ---
+            elif cod in df_art['Codigo'].astype(str).values:
+                st.error(f"❌ Error: El CÓDIGO '{cod}' ya está en uso. Por favor, usa uno diferente.")
+            
+            elif nom in df_art['Nombre'].astype(str).values:
+                st.error(f"❌ Error: El NOMBRE '{nom}' ya existe. No puedes registrar el mismo artículo dos veces.")
+            
             else:
-                nueva = pd.DataFrame([{"Codigo":cod, "Nombre":nom, "Familia":fam, "Stock_Actual":0, "Stock_Minimo":minimo}])
-                conn.update(spreadsheet=URL_DB, worksheet="Articulos", data=pd.concat([df_art, nueva]))
-                st.success("Registrado")
+                # Si pasa las validaciones, se registra
+                nueva = pd.DataFrame([{
+                    "Codigo": cod, 
+                    "Nombre": nom, 
+                    "Familia": fam, 
+                    "Stock_Actual": 0, 
+                    "Stock_Minimo": minimo
+                }])
+                
+                # Actualizar Google Sheets
+                df_final = pd.concat([df_art, nueva], ignore_index=True)
+                conn.update(spreadsheet=URL_DB, data=df_final)
+                
+                st.success(f"✅ ¡Éxito! Articulo '{nom}' registrado con el código {cod}.")
+                st.balloons() # Un toque visual de éxito
 
 # --- MODULO 2: PANEL DE STOCK ---
 elif opcion == "Panel de Stock":
