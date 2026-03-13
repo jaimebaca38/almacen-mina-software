@@ -14,79 +14,77 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 st.sidebar.title("MENU PRINCIPAL")
 opcion = st.sidebar.radio("Seleccione Módulo:", ["Panel de Stock", "Registrar Nuevo Artículo", "Entradas (OC)", "Salidas (Vales)"])
 
-# --- MODULO 1: REGISTRO PROFESIONAL ---
+# --- MODULO 1: REGISTRO CON SALTO CORRELATIVO AUTOMÁTICO ---
 if opcion == "Registrar Nuevo Artículo":
     st.header("📝 Catálogo de Artículos")
     
-    # Leemos la base de datos actual
+    # Leemos la base de datos
     df_art = conn.read(spreadsheet=URL_DB)
     
-    # 1. Selección de Familia primero para generar el prefijo
-    fam = st.selectbox("Seleccione Familia para el nuevo artículo:", 
-                      ["EPP", "HERRAMIENTAS", "EQUIPOS", "CONSUMIBLES"])
+    # 1. Selección de Familia
+    fam = st.selectbox("Seleccione Familia:", 
+                      ["EPP", "HERRAMIENTAS", "EQUIPOS", "CONSUMIBLES"],
+                      key="familia_selector")
     
-    # Definimos el prefijo según la familia
-    prefijos = {
-        "EPP": "EPP",
-        "HERRAMIENTAS": "HER",
-        "EQUIPOS": "EQP",
-        "CONSUMIBLES": "CON"
-    }
+    prefijos = {"EPP": "EPP", "HERRAMIENTAS": "HER", "EQUIPOS": "EQP", "CONSUMIBLES": "CON"}
     prefijo = prefijos[fam]
 
-    # 2. Lógica de Autogeneración basada en la familia seleccionada
+    # 2. CALCULAR EL SIGUIENTE CÓDIGO DISPONIBLE
     ultimo_num = 0
     if not df_art.empty and 'Codigo' in df_art.columns:
-        # Filtramos solo los códigos que empiecen con el prefijo de la familia actual
-        codigos_familia = df_art[df_art['Codigo'].str.startswith(prefijo, na=False)]
-        if not codigos_familia.empty:
-            # Extraemos el número final del código
-            numeros = codigos_familia['Codigo'].str.extract('(\d+)').astype(float).dropna()
+        # Filtramos por prefijo y extraemos el número más alto
+        codigos_fam = df_art[df_art['Codigo'].str.startswith(prefijo, na=False)]
+        if not codigos_fam.empty:
+            numeros = codigos_fam['Codigo'].str.extract('(\d+)').astype(float).dropna()
             if not numeros.empty:
                 ultimo_num = int(numeros.max())
     
-    nuevo_cod_sugerido = f"{prefijo}{ultimo_num + 1:03d}"
+    # Este es el código que toca registrar ahora
+    codigo_a_usar = f"{prefijo}{ultimo_num + 1:03d}"
 
-    # 3. Formulario de Registro
-    # Usamos 'key' en los inputs para poder limpiarlos si fuera necesario
-    with st.form("reg_form", clear_on_submit=True):
-        st.info(f"Sugerencia de código para {fam}: **{nuevo_cod_sugerido}**")
+    # 3. FORMULARIO DE REGISTRO
+    # Importante: No usamos 'value' en el text_input para el código, 
+    # dejamos que el sistema lo muestre como una etiqueta informativa para que no se "chanque"
+    with st.form("form_registro", clear_on_submit=True):
+        st.info(f"PRÓXIMO CÓDIGO DISPONIBLE: **{codigo_a_usar}**")
         
-        c1, c2 = st.columns(2)
-        cod = c1.text_input("Confirmar Código", value=nuevo_cod_sugerido).strip().upper()
-        nom = c1.text_input("Nombre del Artículo (Ej: Casco tipo minero)").strip().upper()
-        minimo = c2.number_input("Stock Mínimo de Alerta", min_value=0, value=5)
+        # El campo de código lo ponemos solo lectura o sugerido
+        cod_confirmado = st.text_input("Confirmar Código para Registro", value=codigo_a_usar)
+        nom_articulo = st.text_input("Nombre del Nuevo Artículo").strip().upper()
+        stock_min = st.number_input("Stock Mínimo (Alerta)", min_value=0, value=5)
         
-        enviar = st.form_submit_button("Guardar en Inventario")
-        
-        if enviar:
-            if nom == "":
-                st.warning("⚠️ Debes ingresar un nombre para el artículo.")
+        boton_guardar = st.form_submit_button("REGISTRAR ARTÍCULO")
+
+        if boton_guardar:
+            # VALIDACIÓN DE SEGURIDAD
+            if nom_articulo == "":
+                st.warning("⚠️ El nombre no puede estar vacío.")
             
-            # VALIDACIÓN ANTI-DUPLICADOS (Para no chancar información)
-            elif cod in df_art['Codigo'].astype(str).values:
-                st.error(f"❌ El código {cod} ya existe en el sistema. No se puede duplicar.")
+            elif cod_confirmado in df_art['Codigo'].astype(str).values:
+                st.error(f"❌ EL CÓDIGO {cod_confirmado} YA EXISTE. El sistema generará uno nuevo ahora.")
+                st.rerun() # Esto obliga a la app a refrescar y mostrar el siguiente correlativo
             
-            elif nom in df_art['Nombre'].astype(str).values:
-                st.error(f"❌ Ya existe un artículo con el nombre '{nom}'.")
+            elif nom_articulo in df_art['Nombre'].astype(str).values:
+                st.error(f"❌ EL NOMBRE '{nom_articulo}' YA ESTÁ REGISTRADO.")
             
             else:
-                # Si todo está bien, creamos la nueva fila
-                nueva_fila = pd.DataFrame([{
-                    "Codigo": cod, 
-                    "Nombre": nom, 
-                    "Familia": fam, 
-                    "Stock_Actual": 0, 
-                    "Stock_Minimo": minimo
+                # REGISTRO EXITOSO
+                nueva_data = pd.DataFrame([{
+                    "Codigo": cod_confirmado,
+                    "Nombre": nom_articulo,
+                    "Familia": fam,
+                    "Stock_Actual": 0,
+                    "Stock_Minimo": stock_min
                 }])
                 
-                # Unimos y subimos a Google Sheets
-                df_updated = pd.concat([df_art, nueva_fila], ignore_index=True)
-                conn.update(spreadsheet=URL_DB, data=df_updated)
+                df_final = pd.concat([df_art, nueva_data], ignore_index=True)
+                conn.update(spreadsheet=URL_DB, data=df_final)
                 
-                st.success(f"✅ Registrado: {nom} con código {cod}")
-                st.balloons()
-                # Al terminar, Streamlit limpiará el formulario por el parámetro clear_on_submit=True
+                st.success(f"✅ ¡{nom_articulo} guardado con éxito bajo el código {cod_confirmado}!")
+                
+                # EL TRUCO FINAL: Forzamos el reinicio para que el código cambie al siguiente correlativo
+                st.cache_data.clear() # Limpiamos caché para leer el nuevo Excel
+                st.rerun()
 # --- MODULO 2: PANEL DE STOCK ---
 elif opcion == "Panel de Stock":
     st.header("📊 Inventario Real")
