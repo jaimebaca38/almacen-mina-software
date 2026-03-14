@@ -202,14 +202,18 @@ elif opcion == "Entradas (OC)":
             if c_b2.button("🗑️ Limpiar Lista"):
                 st.session_state.lista_temporal_ingresos = []
                 st.rerun()
-# --- MODULO 4: SALIDAS (VALES) - VERSIÓN CORREGIDA Y RÁPIDA ---
+# --- MODULO 4: SALIDAS (VALES) - VALIDACIÓN ESTRICTA ANTI-DUPLICADOS ---
 elif opcion == "Salidas (Vales)":
     st.header("📤 Despacho de Materiales (Vales)")
     
-    # Lectura normal (Usa caché para no ser lento)
+    # Lectura de datos (Artículos y Historial)
     df_art = conn.read(spreadsheet=URL_DB)
+    try:
+        # Forzamos lectura fresca del historial para no dejar pasar duplicados
+        df_historial = conn.read(spreadsheet=URL_DB, worksheet="Historial_Salidas", ttl=0)
+    except:
+        df_historial = pd.DataFrame(columns=["ID", "Fecha", "Codigo", "Nombre", "Cantidad", "Vale", "DNI", "Trabajador", "Area", "Digitador"])
 
-    # Inicializamos estados de sesión si no existen
     if 'lista_salidas' not in st.session_state:
         st.session_state.lista_salidas = []
     if 'reset_form' not in st.session_state:
@@ -220,14 +224,12 @@ elif opcion == "Salidas (Vales)":
     # 1. INFORMACIÓN DEL DESPACHO
     st.subheader("1. Información del Despacho")
     col_f, col_v = st.columns(2)
-    
-    # Fecha automática pero ajustable
     fecha_vale = col_f.date_input("Fecha del Vale", value=pd.to_datetime("today"), key=f"f_v_{rf}")
     nro_vale = col_v.text_input("N° de Vale*", key=f"v_nro_{rf}").upper().strip()
 
     c1, c2, c3 = st.columns(3)
-    # Validación de DNI: Solo 8 números
-    dni_input = c1.text_input("DNI (8 dígitos)*", key=f"v_dni_{rf}", max_chars=8).strip()
+    # Restricción de DNI: Máximo 8 caracteres
+    dni_input = c1.text_input("DNI (8 números)*", key=f"v_dni_{rf}", max_chars=8).strip()
     nom_trab = c2.text_input("Nombre del Trabajador*", key=f"v_nom_{rf}").upper().strip()
     area_trab = c3.selectbox("Área:", ["OPERACIONES", "MANTENIMIENTO", "SEGURIDAD", "LOGÍSTICA", "MINA"], key=f"v_area_{rf}")
 
@@ -235,15 +237,29 @@ elif opcion == "Salidas (Vales)":
 
     # 2. CARGA DE ARTÍCULOS
     st.subheader("2. Artículos a Entregar")
-    
-    # Lista de artículos para el buscador
     lista_opciones = ["Seleccione..."] + (df_art['Codigo'] + " - " + df_art['Nombre'] + " (Stock: " + df_art['Stock_Actual'].astype(str) + ")").tolist()
     
     seleccion = st.selectbox("Buscar Artículo:", lista_opciones, key=f"art_sel_{rf}")
-    cant_salida = st.number_input("Cantidad a Entregar", min_value=1, step=1, key=f"cant_val_{rf}")
+    cant_salida = st.number_input("Cantidad", min_value=1, step=1, key=f"cant_val_{rf}")
 
+    # --- EL FILTRO DE SEGURIDAD PARA AGREGAR ---
     if st.button("➕ AGREGAR AL VALE"):
-        if nro_vale and nom_trab and len(dni_input) == 8 and seleccion != "Seleccione...":
+        # A) Verificar si el vale ya está en el Excel
+        vales_en_excel = df_historial['Vale'].astype(str).str.strip().values
+        
+        if not nro_vale:
+            st.error("❌ Debe ingresar un Número de Vale.")
+        elif nro_vale in vales_en_excel:
+            st.error(f"❌ EL VALE {nro_vale} YA EXISTE. No se pueden agregar artículos a un vale duplicado.")
+        # B) Verificar DNI (8 números exactos)
+        elif not (dni_input.isdigit() and len(dni_input) == 8):
+            st.error("❌ DNI INVÁLIDO. Debe tener exactamente 8 números (sin letras ni espacios).")
+        elif not nom_trab:
+            st.error("❌ Debe ingresar el Nombre del Trabajador.")
+        elif seleccion == "Seleccione...":
+            st.error("❌ Seleccione un artículo de la lista.")
+        else:
+            # Si pasa todas las pruebas, se agrega a la lista temporal
             cod = seleccion.split(" - ")[0]
             nom = seleccion.split(" - ")[1].split(" (")[0]
             stock_disp = int(df_art.loc[df_art['Codigo'] == cod, 'Stock_Actual'].values[0])
@@ -256,58 +272,42 @@ elif opcion == "Salidas (Vales)":
                     "Vale": nro_vale, "DNI": dni_input, "Trabajador": nom_trab,
                     "Area": area_trab, "Fecha": fecha_vale.strftime("%d/%m/%Y")
                 })
+                st.success(f"✔️ {nom} agregado al Vale {nro_vale}")
                 st.rerun()
-        else:
-            st.warning("⚠️ Complete el N° de Vale, Nombre y DNI (8 dígitos) antes de agregar.")
 
-    # 3. VISTA PREVIA Y GUARDADO FINAL
+    # 3. GUARDADO FINAL
     if st.session_state.lista_salidas:
-        st.write("---")
-        st.write("### Resumen del Vale:")
-        df_temp = pd.DataFrame(st.session_state.lista_salidas)
-        st.table(df_temp[["Codigo", "Nombre", "Cantidad"]])
+        st.write("### Resumen actual del Vale:")
+        st.table(pd.DataFrame(st.session_state.lista_salidas)[["Codigo", "Nombre", "Cantidad"]])
         
         p_digita = st.text_input("Digitador Responsable (Firma)*:", key=f"v_dig_{rf}").upper().strip()
 
-        if st.button("🚀 FINALIZAR Y REGISTRAR EN EXCEL"):
-            # VERIFICACIÓN DE ÚLTIMO SEGUNDO (Anti-duplicados)
-            # Leemos el historial real sin caché (ttl=0) solo en este paso
-            df_historial = conn.read(spreadsheet=URL_DB, worksheet="Historial_Salidas", ttl=0)
-            
-            # Buscamos si el vale ya existe
-            if nro_vale in df_historial['Vale'].astype(str).values:
-                st.error(f"❌ ERROR: El Vale N° {nro_vale} ya está registrado en el sistema. Debe cambiar el número para guardar.")
+        if st.button("🚀 FINALIZAR Y REGISTRAR VALE"):
+            # Re-confirmación de seguridad (por si otro usuario guardó el mismo vale mientras cargabas)
+            df_check = conn.read(spreadsheet=URL_DB, worksheet="Historial_Salidas", ttl=0)
+            if nro_vale in df_check['Vale'].astype(str).values:
+                st.error("❌ ERROR DE ÚLTIMO SEGUNDO: Este vale acaba de ser registrado por otra persona. Proceso abortado.")
             elif not p_digita:
-                st.error("❌ Por favor, ingrese el nombre del Digitador.")
+                st.error("❌ Ingrese el nombre del Digitador.")
             else:
-                # Proceso de guardado
                 for item in st.session_state.lista_salidas:
-                    # 1. Descontar Stock
+                    # Descontar Stock
                     idx = df_art.index[df_art['Codigo'] == item['Codigo']][0]
                     df_art.at[idx, 'Stock_Actual'] -= item['Cantidad']
                     
-                    # 2. Crear fila de historial
+                    # Registrar en historial
                     nueva_fila = pd.DataFrame([{
-                        "ID": str(len(df_historial) + 1),
-                        "Fecha": item['Fecha'],
-                        "Codigo": item['Codigo'],
-                        "Nombre": item['Nombre'],
-                        "Cantidad": item['Cantidad'],
-                        "Vale": item['Vale'],
-                        "DNI": item['DNI'],
-                        "Trabajador": item['Trabajador'],
-                        "Area": item['Area'],
+                        "ID": str(len(df_check) + 1), "Fecha": item['Fecha'], "Codigo": item['Codigo'],
+                        "Nombre": item['Nombre'], "Cantidad": item['Cantidad'], "Vale": item['Vale'],
+                        "DNI": item['DNI'], "Trabajador": item['Trabajador'], "Area": item['Area'],
                         "Digitador": p_digita
                     }])
-                    df_historial = pd.concat([df_historial, nueva_fila], ignore_index=True)
+                    df_check = pd.concat([df_check, nueva_fila], ignore_index=True)
 
-                # Actualizar Google Sheets
                 conn.update(spreadsheet=URL_DB, data=df_art)
-                conn.update(spreadsheet=URL_DB, worksheet="Historial_Salidas", data=df_historial)
+                conn.update(spreadsheet=URL_DB, worksheet="Historial_Salidas", data=df_check)
                 
-                st.success(f"✅ Vale {nro_vale} registrado con éxito.")
-                
-                # Limpiar todo para el siguiente registro
+                st.success(f"✅ Vale {nro_vale} guardado exitosamente.")
                 st.session_state.lista_salidas = []
                 st.session_state.reset_form += 1
                 st.cache_data.clear()
