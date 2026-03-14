@@ -202,13 +202,18 @@ elif opcion == "Entradas (OC)":
             if c_b2.button("🗑️ Limpiar Lista"):
                 st.session_state.lista_temporal_ingresos = []
                 st.rerun()
-# --- MODULO 4: SALIDAS (VALES) - BLOQUEO INFALIBLE DE DUPLICADOS ---
+# --- MODULO 4: SALIDAS (VALES) - VALIDACIÓN INSTANTÁNEA Y FECHA ---
 elif opcion == "Salidas (Vales)":
     st.header("📤 Despacho de Materiales (Vales)")
     
+    # Lectura inicial de datos
     df_art = conn.read(spreadsheet=URL_DB)
-    
-    # Inicializar estados
+    try:
+        df_salidas_verif = conn.read(spreadsheet=URL_DB, worksheet="Historial_Salidas")
+    except:
+        df_salidas_verif = pd.DataFrame(columns=["ID", "Fecha", "Codigo", "Nombre", "Cantidad", "Vale", "DNI", "Trabajador", "Area", "Digitador"])
+
+    # Inicializar estados de sesión
     if 'lista_salidas' not in st.session_state:
         st.session_state.lista_salidas = []
     if 'reset_trabajador' not in st.session_state:
@@ -222,7 +227,17 @@ elif opcion == "Salidas (Vales)":
     # 1. DATOS DEL TRABAJADOR
     st.subheader("Información del Despacho")
     c1, c2, c3 = st.columns(3)
+    
+    # El número de vale se verifica apenas se ingresa
     nro_vale = c1.text_input("N° de Vale*", key=f"v_nro_{rt}").upper().strip()
+    
+    # --- ALERTA INSTANTÁNEA DE DUPLICIDAD ---
+    vale_existe = False
+    if nro_vale:
+        if nro_vale in df_salidas_verif['Vale'].astype(str).values:
+            st.error(f"⚠️ EL VALE {nro_vale} YA EXISTE. Por favor, verifique el número.")
+            vale_existe = True
+    
     dni_trab = c2.text_input("DNI del Trabajador*", key=f"v_dni_{rt}").strip()
     nom_trab = c3.text_input("Nombre del Trabajador*", key=f"v_nom_{rt}").upper().strip()
     area_trab = st.selectbox("Área / Proyecto:", ["OPERACIONES", "MANTENIMIENTO", "SEGURIDAD", "LOGÍSTICA", "OTRO"], key=f"v_area_{rt}")
@@ -237,7 +252,9 @@ elif opcion == "Salidas (Vales)":
     cant_salida = st.number_input("Cantidad a Entregar", min_value=1, step=1, key=f"cant_val_{ra}")
     
     if st.button("➕ AGREGAR AL VALE"):
-        if seleccion != "Seleccione..." and nro_vale and nom_trab:
+        if vale_existe:
+            st.error("No se pueden agregar items a un vale duplicado.")
+        elif seleccion != "Seleccione..." and nro_vale and nom_trab:
             cod = seleccion.split(" - ")[0]
             nom = seleccion.split(" - ")[1].split(" (")[0]
             stock_disp = int(df_art.loc[df_art['Codigo'] == cod, 'Stock_Actual'].values[0])
@@ -248,61 +265,64 @@ elif opcion == "Salidas (Vales)":
                 st.session_state.lista_salidas.append({
                     "Codigo": cod, "Nombre": nom, "Cantidad": cant_salida,
                     "Vale": nro_vale, "DNI": dni_trab, "Trabajador": nom_trab,
-                    "Area": area_trab, "Fecha": pd.to_datetime("today").strftime("%d/%m/%Y")
+                    "Area": area_trab, 
+                    "Fecha": pd.to_datetime("today").strftime("%d/%m/%Y") # Fecha automática
                 })
                 st.session_state.reset_articulo += 1
                 st.rerun() 
         else:
-            st.warning("⚠️ Completa los datos del trabajador y del artículo.")
+            st.warning("⚠️ Complete los datos obligatorios.")
 
-    # 3. CIERRE DE VALE CON VALIDACIÓN REAL
+    # 3. CIERRE Y REGISTRO
     if st.session_state.lista_salidas:
         st.write("### Vista Previa del Vale:")
-        st.table(pd.DataFrame(st.session_state.lista_salidas)[["Codigo", "Nombre", "Cantidad"]])
+        st.table(pd.DataFrame(st.session_state.lista_salidas)[["Codigo", "Nombre", "Cantidad", "Fecha"]])
         
         p_digita = st.text_input("Personal que entrega (Digitador):", key=f"v_dig_{rt}").upper().strip()
 
         col_f1, col_f2 = st.columns([1, 4])
         
         if col_f1.button("🚀 FINALIZAR VALE"):
-            # --- EL CANDADO MAESTRO ---
-            # Volvemos a leer la base de datos justo antes de guardar para estar seguros
-            df_salidas_verif = conn.read(spreadsheet=URL_DB, worksheet="Historial_Salidas")
-            
-            # Verificamos si el número de vale ya existe en la columna 'Vale'
-            if nro_vale in df_salidas_verif['Vale'].astype(str).values:
-                st.error(f"❌ ERROR: El Vale N° {nro_vale} ya fue registrado anteriormente. No se puede duplicar.")
+            if vale_existe:
+                st.error("Cambie el número de vale para poder guardar.")
             elif not p_digita:
-                st.error("❌ Indica quién entrega el material.")
+                st.error("Indique el Digitador.")
             else:
-                # Si pasa las pruebas, procedemos a guardar
+                # Procesar movimientos
                 for item in st.session_state.lista_salidas:
+                    # Actualizar Stock
                     idx = df_art.index[df_art['Codigo'] == item['Codigo']][0]
                     df_art.at[idx, 'Stock_Actual'] -= item['Cantidad']
                     
+                    # Preparar fila para el historial
                     nuevo_reg = pd.DataFrame([{
-                        "ID": str(len(df_salidas_verif) + 1), "Fecha": item['Fecha'],
-                        "Codigo": item['Codigo'], "Nombre": item['Nombre'],
-                        "Cantidad": item['Cantidad'], "Vale": item['Vale'],
-                        "DNI": item['DNI'], "Trabajador": item['Trabajador'],
-                        "Area": item['Area'], "Digitador": p_digita
+                        "ID": str(len(df_salidas_verif) + 1),
+                        "Fecha": item['Fecha'],
+                        "Codigo": item['Codigo'],
+                        "Nombre": item['Nombre'],
+                        "Cantidad": item['Cantidad'],
+                        "Vale": item['Vale'],
+                        "DNI": item['DNI'],
+                        "Trabajador": item['Trabajador'],
+                        "Area": item['Area'],
+                        "Digitador": p_digita
                     }])
                     df_salidas_verif = pd.concat([df_salidas_verif, nuevo_reg], ignore_index=True)
 
-                # Actualizamos Google Sheets
+                # Guardar cambios
                 conn.update(spreadsheet=URL_DB, data=df_art)
                 conn.update(spreadsheet=URL_DB, worksheet="Historial_Salidas", data=df_salidas_verif)
                 
-                st.success(f"✅ Vale {nro_vale} procesado exitosamente.")
+                st.success(f"✅ Vale {nro_vale} guardado correctamente.")
                 
-                # REINICIO TOTAL
+                # Limpiar todo
                 st.session_state.lista_salidas = []
                 st.session_state.reset_trabajador += 1
                 st.session_state.reset_articulo += 1
                 st.cache_data.clear()
                 st.rerun()
 
-        if col_f2.button("🗑️ Cancelar Vale"):
+        if col_f2.button("🗑️ Cancelar / Limpiar Todo"):
             st.session_state.lista_salidas = []
             st.session_state.reset_trabajador += 1
             st.session_state.reset_articulo += 1
