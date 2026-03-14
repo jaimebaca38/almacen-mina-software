@@ -202,63 +202,93 @@ elif opcion == "Entradas (OC)":
             if c_b2.button("🗑️ Limpiar Lista"):
                 st.session_state.lista_temporal_ingresos = []
                 st.rerun()
-# --- MODULO 4: SALIDAS (VALES) - VALIDACIÓN AL GUARDAR ---
+# --- MODULO 4: SALIDAS (VALES) - VERSIÓN CORREGIDA Y RÁPIDA ---
 elif opcion == "Salidas (Vales)":
     st.header("📤 Despacho de Materiales (Vales)")
     
-    # Lectura normal (usa caché para ser rápido)
+    # Lectura normal (Usa caché para no ser lento)
     df_art = conn.read(spreadsheet=URL_DB)
 
+    # Inicializamos estados de sesión si no existen
     if 'lista_salidas' not in st.session_state:
         st.session_state.lista_salidas = []
-    if 'reset_trabajador' not in st.session_state:
-        st.session_state.reset_trabajador = 0
+    if 'reset_form' not in st.session_state:
+        st.session_state.reset_form = 0
 
-    rt = st.session_state.reset_trabajador
+    rf = st.session_state.reset_form
 
-    # 1. DATOS DEL VALE Y TRABAJADOR
+    # 1. INFORMACIÓN DEL DESPACHO
     st.subheader("1. Información del Despacho")
     col_f, col_v = st.columns(2)
-    fecha_vale = col_f.date_input("Fecha del Vale", value=pd.to_datetime("today"), key=f"f_v_{rt}")
-    nro_vale = col_v.text_input("N° de Vale*", key=f"v_nro_{rt}").upper().strip()
+    
+    # Fecha automática pero ajustable
+    fecha_vale = col_f.date_input("Fecha del Vale", value=pd.to_datetime("today"), key=f"f_v_{rf}")
+    nro_vale = col_v.text_input("N° de Vale*", key=f"v_nro_{rf}").upper().strip()
 
     c1, c2, c3 = st.columns(3)
-    dni_input = c1.text_input("DNI (8 dígitos)*", key=f"v_dni_{rt}", max_chars=8).strip()
-    nom_trab = c2.text_input("Nombre del Trabajador*", key=f"v_nom_{rt}").upper().strip()
-    area_trab = c3.selectbox("Área:", ["OPERACIONES", "MANTENIMIENTO", "SEGURIDAD", "MINA"], key=f"v_area_{rt}")
+    # Validación de DNI: Solo 8 números
+    dni_input = c1.text_input("DNI (8 dígitos)*", key=f"v_dni_{rf}", max_chars=8).strip()
+    nom_trab = c2.text_input("Nombre del Trabajador*", key=f"v_nom_{rf}").upper().strip()
+    area_trab = c3.selectbox("Área:", ["OPERACIONES", "MANTENIMIENTO", "SEGURIDAD", "LOGÍSTICA", "MINA"], key=f"v_area_{rf}")
 
-    # ... (Aquí va tu lógica de agregar artículos a st.session_state.lista_salidas) ...
+    st.divider()
 
-    # 2. BOTÓN DE GUARDADO CON VERIFICACIÓN ANTIDUPLICADO
-    if st.session_state.lista_salidas:
-        st.write("### Vista Previa:")
-        st.table(pd.DataFrame(st.session_state.lista_salidas)[["Codigo", "Nombre", "Cantidad"]])
-        
-        p_digita = st.text_input("Digitador Responsable:", key=f"v_dig_{rt}").upper().strip()
+    # 2. CARGA DE ARTÍCULOS
+    st.subheader("2. Artículos a Entregar")
+    
+    # Lista de artículos para el buscador
+    lista_opciones = ["Seleccione..."] + (df_art['Codigo'] + " - " + df_art['Nombre'] + " (Stock: " + df_art['Stock_Actual'].astype(str) + ")").tolist()
+    
+    seleccion = st.selectbox("Buscar Artículo:", lista_opciones, key=f"art_sel_{rf}")
+    cant_salida = st.number_input("Cantidad a Entregar", min_value=1, step=1, key=f"cant_val_{rf}")
 
-        if st.button("🚀 FINALIZAR Y GUARDAR VALE"):
-            # --- EL FILTRO DE SEGURIDAD ---
-            # Leemos el historial real justo ahora, sin usar caché (ttl=0 solo aquí)
-            df_verificar = conn.read(spreadsheet=URL_DB, worksheet="Historial_Salidas", ttl=0)
-            vales_en_uso = df_verificar['Vale'].astype(str).str.strip().values
-
-            if nro_vale in vales_en_uso:
-                # SI EL VALE YA EXISTE, MANDAMOS LA ALERTA Y NO GUARDAMOS NADA
-                st.error(f"⚠️ ERROR: El Vale N° {nro_vale} ya fue registrado anteriormente por otro usuario o en otro momento. Por favor, cambie el número de vale para poder guardar.")
-            elif not p_digita:
-                st.error("❌ Debe ingresar el nombre del digitador.")
-            elif not (dni_input.isdigit() and len(dni_input) == 8):
-                st.error("❌ El DNI debe ser de 8 números.")
+    if st.button("➕ AGREGAR AL VALE"):
+        if nro_vale and nom_trab and len(dni_input) == 8 and seleccion != "Seleccione...":
+            cod = seleccion.split(" - ")[0]
+            nom = seleccion.split(" - ")[1].split(" (")[0]
+            stock_disp = int(df_art.loc[df_art['Codigo'] == cod, 'Stock_Actual'].values[0])
+            
+            if cant_salida > stock_disp:
+                st.error(f"❌ Stock insuficiente. Solo hay {stock_disp} unidades.")
             else:
-                # SI EL VALE ES NUEVO, PROCEDEMOS A GUARDAR
+                st.session_state.lista_salidas.append({
+                    "Codigo": cod, "Nombre": nom, "Cantidad": cant_salida,
+                    "Vale": nro_vale, "DNI": dni_input, "Trabajador": nom_trab,
+                    "Area": area_trab, "Fecha": fecha_vale.strftime("%d/%m/%Y")
+                })
+                st.rerun()
+        else:
+            st.warning("⚠️ Complete el N° de Vale, Nombre y DNI (8 dígitos) antes de agregar.")
+
+    # 3. VISTA PREVIA Y GUARDADO FINAL
+    if st.session_state.lista_salidas:
+        st.write("---")
+        st.write("### Resumen del Vale:")
+        df_temp = pd.DataFrame(st.session_state.lista_salidas)
+        st.table(df_temp[["Codigo", "Nombre", "Cantidad"]])
+        
+        p_digita = st.text_input("Digitador Responsable (Firma)*:", key=f"v_dig_{rf}").upper().strip()
+
+        if st.button("🚀 FINALIZAR Y REGISTRAR EN EXCEL"):
+            # VERIFICACIÓN DE ÚLTIMO SEGUNDO (Anti-duplicados)
+            # Leemos el historial real sin caché (ttl=0) solo en este paso
+            df_historial = conn.read(spreadsheet=URL_DB, worksheet="Historial_Salidas", ttl=0)
+            
+            # Buscamos si el vale ya existe
+            if nro_vale in df_historial['Vale'].astype(str).values:
+                st.error(f"❌ ERROR: El Vale N° {nro_vale} ya está registrado en el sistema. Debe cambiar el número para guardar.")
+            elif not p_digita:
+                st.error("❌ Por favor, ingrese el nombre del Digitador.")
+            else:
+                # Proceso de guardado
                 for item in st.session_state.lista_salidas:
-                    # Actualizar Stock
+                    # 1. Descontar Stock
                     idx = df_art.index[df_art['Codigo'] == item['Codigo']][0]
                     df_art.at[idx, 'Stock_Actual'] -= item['Cantidad']
                     
-                    # Crear registro para el historial
-                    nuevo_reg = pd.DataFrame([{
-                        "ID": str(len(df_verificar) + 1),
+                    # 2. Crear fila de historial
+                    nueva_fila = pd.DataFrame([{
+                        "ID": str(len(df_historial) + 1),
                         "Fecha": item['Fecha'],
                         "Codigo": item['Codigo'],
                         "Nombre": item['Nombre'],
@@ -269,16 +299,16 @@ elif opcion == "Salidas (Vales)":
                         "Area": item['Area'],
                         "Digitador": p_digita
                     }])
-                    df_verificar = pd.concat([df_verificar, nuevo_reg], ignore_index=True)
+                    df_historial = pd.concat([df_historial, nueva_fila], ignore_index=True)
 
-                # Guardar en Google Sheets
+                # Actualizar Google Sheets
                 conn.update(spreadsheet=URL_DB, data=df_art)
-                conn.update(spreadsheet=URL_DB, worksheet="Historial_Salidas", data=df_verificar)
+                conn.update(spreadsheet=URL_DB, worksheet="Historial_Salidas", data=df_historial)
                 
-                st.success(f"✅ Vale {nro_vale} guardado con éxito.")
+                st.success(f"✅ Vale {nro_vale} registrado con éxito.")
                 
-                # Limpieza y reinicio
+                # Limpiar todo para el siguiente registro
                 st.session_state.lista_salidas = []
-                st.session_state.reset_trabajador += 1
-                st.cache_data.clear() # Limpia la caché para que la siguiente lectura vea el nuevo vale
+                st.session_state.reset_form += 1
+                st.cache_data.clear()
                 st.rerun()
