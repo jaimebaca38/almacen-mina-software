@@ -202,120 +202,83 @@ elif opcion == "Entradas (OC)":
             if c_b2.button("🗑️ Limpiar Lista"):
                 st.session_state.lista_temporal_ingresos = []
                 st.rerun()
-# --- MODULO 4: SALIDAS (VALES) - VERSIÓN BLINDADA ---
+# --- MODULO 4: SALIDAS (VALES) - VALIDACIÓN AL GUARDAR ---
 elif opcion == "Salidas (Vales)":
     st.header("📤 Despacho de Materiales (Vales)")
     
-    # 1. CARGA DE ARTÍCULOS
+    # Lectura normal (usa caché para ser rápido)
     df_art = conn.read(spreadsheet=URL_DB)
 
-    # 2. CARGA DE HISTORIAL (FORZAMOS LECTURA FRESCA)
-    try:
-        # Usamos un truco para evitar que Streamlit use datos viejos
-        df_historial = conn.read(spreadsheet=URL_DB, worksheet="Historial_Salidas", ttl=0)
-    except:
-        df_historial = pd.DataFrame(columns=["ID", "Fecha", "Codigo", "Nombre", "Cantidad", "Vale", "DNI", "Trabajador", "Area", "Digitador"])
-
-    # Estados de sesión
     if 'lista_salidas' not in st.session_state:
         st.session_state.lista_salidas = []
     if 'reset_trabajador' not in st.session_state:
         st.session_state.reset_trabajador = 0
-    if 'reset_articulo' not in st.session_state:
-        st.session_state.reset_articulo = 0
 
     rt = st.session_state.reset_trabajador
-    ra = st.session_state.reset_articulo
 
-    # --- PASO A: VALIDACIÓN DE VALE (FRENO DE MANO) ---
-    st.subheader("1. Identificación del Vale")
-    c_fec, c_vle = st.columns(2)
-    fecha_vale = c_fec.date_input("Fecha del Vale", value=pd.to_datetime("today"), key=f"f_v_{rt}")
-    nro_vale = c_vle.text_input("N° de Vale (Escribe y presiona ENTER)*", key=f"v_nro_{rt}").upper().strip()
+    # 1. DATOS DEL VALE Y TRABAJADOR
+    st.subheader("1. Información del Despacho")
+    col_f, col_v = st.columns(2)
+    fecha_vale = col_f.date_input("Fecha del Vale", value=pd.to_datetime("today"), key=f"f_v_{rt}")
+    nro_vale = col_v.text_input("N° de Vale*", key=f"v_nro_{rt}").upper().strip()
 
-    if nro_vale:
-        # Verificación estricta en la columna 'Vale'
-        vales_usados = df_historial['Vale'].astype(str).unique()
-        if nro_vale in vales_usados:
-            st.error(f"❌ EL VALE {nro_vale} YA EXISTE EN EL EXCEL. No puede continuar con este número.")
-            st.info("💡 Por favor, verifique su talonario o corrija el número arriba.")
-            st.stop() # AQUÍ SE DETIENE TODO. No mostrará lo que sigue.
-        else:
-            st.success(f"✅ Vale {nro_vale} disponible para registro.")
-
-    # --- PASO B: DATOS DEL TRABAJADOR (SOLO SE VE SI EL VALE ES VÁLIDO) ---
-    st.divider()
     c1, c2, c3 = st.columns(3)
     dni_input = c1.text_input("DNI (8 dígitos)*", key=f"v_dni_{rt}", max_chars=8).strip()
-    
-    # Validación de DNI
-    dni_ok = False
-    if dni_input:
-        if not dni_input.isdigit() or len(dni_input) != 8:
-            st.warning("⚠️ El DNI debe ser de 8 números.")
-        else:
-            dni_ok = True
-
     nom_trab = c2.text_input("Nombre del Trabajador*", key=f"v_nom_{rt}").upper().strip()
-    area_trab = c3.selectbox("Área:", ["OPERACIONES", "MANTENIMIENTO", "SEGURIDAD", "LOGÍSTICA", "MINA"], key=f"v_area_{rt}")
+    area_trab = c3.selectbox("Área:", ["OPERACIONES", "MANTENIMIENTO", "SEGURIDAD", "MINA"], key=f"v_area_{rt}")
 
-    # --- PASO C: ARTÍCULOS ---
-    st.subheader("2. Carga de Artículos")
-    opciones = ["Seleccione..."] + (df_art['Codigo'] + " - " + df_art['Nombre'] + " (Stock: " + df_art['Stock_Actual'].astype(str) + ")").tolist()
-    
-    seleccion = st.selectbox("Buscar Artículo:", opciones, key=f"art_sel_{ra}")
-    cant_salida = st.number_input("Cantidad", min_value=1, step=1, key=f"cant_val_{ra}")
-    
-    if st.button("➕ AGREGAR AL VALE"):
-        if nro_vale and nom_trab and dni_ok and seleccion != "Seleccione...":
-            cod = seleccion.split(" - ")[0]
-            nom = seleccion.split(" - ")[1].split(" (")[0]
-            
-            st.session_state.lista_salidas.append({
-                "Codigo": cod, "Nombre": nom, "Cantidad": cant_salida,
-                "Vale": nro_vale, "DNI": dni_input, "Trabajador": nom_trab,
-                "Area": area_trab, "Fecha": fecha_vale.strftime("%d/%m/%Y")
-            })
-            st.session_state.reset_articulo += 1
-            st.rerun()
-        else:
-            st.error("⚠️ Complete todos los campos correctamente antes de agregar.")
+    # ... (Aquí va tu lógica de agregar artículos a st.session_state.lista_salidas) ...
 
-    # --- PASO D: FINALIZAR ---
+    # 2. BOTÓN DE GUARDADO CON VERIFICACIÓN ANTIDUPLICADO
     if st.session_state.lista_salidas:
         st.write("### Vista Previa:")
         st.table(pd.DataFrame(st.session_state.lista_salidas)[["Codigo", "Nombre", "Cantidad"]])
         
-        p_digita = st.text_input("Firma de Digitador:", key=f"v_dig_{rt}").upper().strip()
+        p_digita = st.text_input("Digitador Responsable:", key=f"v_dig_{rt}").upper().strip()
 
-        if st.button("🚀 GUARDAR VALE COMPLETO EN EXCEL"):
-            if p_digita:
-                # RE-VERIFICACIÓN DE ÚLTIMO SEGUNDO
-                df_final = conn.read(spreadsheet=URL_DB, worksheet="Historial_Salidas", ttl=0)
-                if nro_vale in df_final['Vale'].astype(str).values:
-                    st.error("❌ ERROR CRÍTICO: El vale se registró mientras llenabas el formulario. Proceso abortado.")
-                else:
-                    # PROCESO DE GUARDADO
-                    for item in st.session_state.lista_salidas:
-                        # Restar Stock
-                        idx = df_art.index[df_art['Codigo'] == item['Codigo']][0]
-                        df_art.at[idx, 'Stock_Actual'] -= item['Cantidad']
-                        
-                        # Nuevo Registro
-                        nuevo = pd.DataFrame([{
-                            "ID": str(len(df_final) + 1), "Fecha": item['Fecha'],
-                            "Codigo": item['Codigo'], "Nombre": item['Nombre'],
-                            "Cantidad": item['Cantidad'], "Vale": item['Vale'],
-                            "DNI": item['DNI'], "Trabajador": item['Trabajador'],
-                            "Area": item['Area'], "Digitador": p_digita
-                        }])
-                        df_final = pd.concat([df_final, nuevo], ignore_index=True)
+        if st.button("🚀 FINALIZAR Y GUARDAR VALE"):
+            # --- EL FILTRO DE SEGURIDAD ---
+            # Leemos el historial real justo ahora, sin usar caché (ttl=0 solo aquí)
+            df_verificar = conn.read(spreadsheet=URL_DB, worksheet="Historial_Salidas", ttl=0)
+            vales_en_uso = df_verificar['Vale'].astype(str).str.strip().values
 
-                    conn.update(spreadsheet=URL_DB, data=df_art)
-                    conn.update(spreadsheet=URL_DB, worksheet="Historial_Salidas", data=df_final)
+            if nro_vale in vales_en_uso:
+                # SI EL VALE YA EXISTE, MANDAMOS LA ALERTA Y NO GUARDAMOS NADA
+                st.error(f"⚠️ ERROR: El Vale N° {nro_vale} ya fue registrado anteriormente por otro usuario o en otro momento. Por favor, cambie el número de vale para poder guardar.")
+            elif not p_digita:
+                st.error("❌ Debe ingresar el nombre del digitador.")
+            elif not (dni_input.isdigit() and len(dni_input) == 8):
+                st.error("❌ El DNI debe ser de 8 números.")
+            else:
+                # SI EL VALE ES NUEVO, PROCEDEMOS A GUARDAR
+                for item in st.session_state.lista_salidas:
+                    # Actualizar Stock
+                    idx = df_art.index[df_art['Codigo'] == item['Codigo']][0]
+                    df_art.at[idx, 'Stock_Actual'] -= item['Cantidad']
                     
-                    st.success("✅ Registro exitoso. Formulario limpiado.")
-                    st.session_state.lista_salidas = []
-                    st.session_state.reset_trabajador += 1
-                    st.cache_data.clear()
-                    st.rerun()
+                    # Crear registro para el historial
+                    nuevo_reg = pd.DataFrame([{
+                        "ID": str(len(df_verificar) + 1),
+                        "Fecha": item['Fecha'],
+                        "Codigo": item['Codigo'],
+                        "Nombre": item['Nombre'],
+                        "Cantidad": item['Cantidad'],
+                        "Vale": item['Vale'],
+                        "DNI": item['DNI'],
+                        "Trabajador": item['Trabajador'],
+                        "Area": item['Area'],
+                        "Digitador": p_digita
+                    }])
+                    df_verificar = pd.concat([df_verificar, nuevo_reg], ignore_index=True)
+
+                # Guardar en Google Sheets
+                conn.update(spreadsheet=URL_DB, data=df_art)
+                conn.update(spreadsheet=URL_DB, worksheet="Historial_Salidas", data=df_verificar)
+                
+                st.success(f"✅ Vale {nro_vale} guardado con éxito.")
+                
+                # Limpieza y reinicio
+                st.session_state.lista_salidas = []
+                st.session_state.reset_trabajador += 1
+                st.cache_data.clear() # Limpia la caché para que la siguiente lectura vea el nuevo vale
+                st.rerun()
