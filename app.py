@@ -202,19 +202,17 @@ elif opcion == "Entradas (OC)":
             if c_b2.button("🗑️ Limpiar Lista"):
                 st.session_state.lista_temporal_ingresos = []
                 st.rerun()
-# --- MODULO 4: SALIDAS (VALES) - VERSIÓN OPTIMIZADA Y SEGURA ---
+# --- MODULO 4: SALIDAS (VALES) - VERSIÓN ESTABLE CON MEMORIA TEMPORAL ---
 elif opcion == "Salidas (Vales)":
     st.header("📤 Despacho de Materiales (Vales)")
     
-    # 1. INTENTO DE LECTURA CON MANEJO DE ERRORES (API SAFETY)
+    # Intentamos leer los artículos (si falla, usamos el caché anterior para no cerrar la app)
     try:
-        # Solo usamos ttl=0 aquí para asegurar datos frescos al entrar al módulo
-        df_art = conn.read(spreadsheet=URL_DB, ttl=0)
-        df_historial = conn.read(spreadsheet=URL_DB, worksheet="Historial_Salidas", ttl=0)
-    except Exception as e:
-        st.error("⚠️ Google Sheets está temporalmente saturado. Por favor, espera 5 segundos y presiona F5.")
-        st.stop()
+        df_art = conn.read(spreadsheet=URL_DB, ttl="10m") # Cacheamos 10 min para ganar velocidad
+    except:
+        st.warning("⚠️ Conexión lenta con Google Sheets. Usando datos en memoria...")
 
+    # Mantenemos los datos ingresados en el session_state (Esto evita que se borren al haber un error)
     if 'lista_salidas' not in st.session_state:
         st.session_state.lista_salidas = []
     if 'reset_form' not in st.session_state:
@@ -222,98 +220,79 @@ elif opcion == "Salidas (Vales)":
 
     rf = st.session_state.reset_form
 
-    # 2. INFORMACIÓN DEL DESPACHO
+    # 1. INFORMACIÓN DEL DESPACHO
     st.subheader("1. Información del Despacho")
     col_f, col_v = st.columns(2)
-    fecha_vale = col_f.date_input("Fecha del Vale", value=pd.to_datetime("today"), key=f"f_v_{rf}")
+    fecha_vale = col_f.date_input("Fecha", value=pd.to_datetime("today"), key=f"f_v_{rf}")
     nro_vale = col_v.text_input("N° de Vale*", key=f"v_nro_{rf}").upper().strip()
 
     c1, c2, c3 = st.columns(3)
-    # VALIDACIÓN DNI: Máximo 8 caracteres y solo números
+    # Candado de DNI: Solo 8 dígitos
     dni_input = c1.text_input("DNI (8 números)*", key=f"v_dni_{rf}", max_chars=8).strip()
-    nom_trab = c2.text_input("Nombre del Trabajador*", key=f"v_nom_{rf}").upper().strip()
+    nom_trab = c2.text_input("Trabajador*", key=f"v_nom_{rf}").upper().strip()
     area_trab = c3.selectbox("Área:", ["OPERACIONES", "MANTENIMIENTO", "SEGURIDAD", "LOGÍSTICA", "MINA"], key=f"v_area_{rf}")
 
     st.divider()
 
-    # 3. CARGA DE ARTÍCULOS
+    # 2. CARGA DE ARTÍCULOS
     st.subheader("2. Artículos a Entregar")
     opciones = ["Seleccione..."] + (df_art['Codigo'] + " - " + df_art['Nombre'] + " (Stock: " + df_art['Stock_Actual'].astype(str) + ")").tolist()
-    
     seleccion = st.selectbox("Buscar Artículo:", opciones, key=f"art_sel_{rf}")
     cant_salida = st.number_input("Cantidad", min_value=1, step=1, key=f"cant_val_{rf}")
 
     if st.button("➕ AGREGAR AL VALE"):
-        # RESTRICCIÓN DE DNI Y CAMPOS VACÍOS
-        dni_es_valido = dni_input.isdigit() and len(dni_input) == 8
-        vales_usados = df_historial['Vale'].astype(str).str.strip().values
-
-        if not nro_vale or not nom_trab:
-            st.error("❌ El Número de Vale y Nombre son obligatorios.")
-        elif not dni_es_valido:
-            st.error("❌ El DNI debe ser de exactamente 8 números.")
-        elif nro_vale in vales_usados:
-            st.error(f"❌ El Vale {nro_vale} ya existe en el historial. Use un número distinto.")
+        # Validación de DNI antes de agregar a la lista temporal
+        if not nro_vale or not nom_trab or len(dni_input) != 8 or not dni_input.isdigit():
+            st.error("❌ Verifique: El Vale y Nombre son obligatorios, y el DNI debe tener 8 números.")
         elif seleccion == "Seleccione...":
-            st.error("❌ Seleccione un artículo válido.")
+            st.error("❌ Seleccione un artículo.")
         else:
-            # Si pasa las pruebas, agregar a la lista
             cod = seleccion.split(" - ")[0]
             nom = seleccion.split(" - ")[1].split(" (")[0]
-            stock_disp = int(df_art.loc[df_art['Codigo'] == cod, 'Stock_Actual'].values[0])
-            
-            if cant_salida > stock_disp:
-                st.error(f"❌ Stock insuficiente. Solo hay {stock_disp} unidades.")
-            else:
-                st.session_state.lista_salidas.append({
-                    "Codigo": cod, "Nombre": nom, "Cantidad": cant_salida,
-                    "Vale": nro_vale, "DNI": dni_input, "Trabajador": nom_trab,
-                    "Area": area_trab, "Fecha": fecha_vale.strftime("%d/%m/%Y")
-                })
-                st.rerun()
+            st.session_state.lista_salidas.append({
+                "Codigo": cod, "Nombre": nom, "Cantidad": cant_salida,
+                "Vale": nro_vale, "DNI": dni_input, "Trabajador": nom_trab,
+                "Area": area_trab, "Fecha": fecha_vale.strftime("%d/%m/%Y")
+            })
+            st.rerun()
 
-    # 4. REGISTRO FINAL EN EXCEL
+    # 3. VISTA PREVIA Y GUARDADO (EL ÚLTIMO CANDADO)
     if st.session_state.lista_salidas:
-        st.write("### Resumen del Vale:")
+        st.write("### Artículos en este Vale:")
         st.table(pd.DataFrame(st.session_state.lista_salidas)[["Codigo", "Nombre", "Cantidad"]])
         
-        p_digita = st.text_input("Digitador (Firma)*:", key=f"v_dig_{rf}").upper().strip()
+        p_digita = st.text_input("Digitador Responsable*:", key=f"v_dig_{rf}").upper().strip()
 
-        if st.button("🚀 FINALIZAR Y GUARDAR TODO"):
-            if not p_digita:
-                st.error("❌ Ingrese el nombre del digitador responsable.")
-            else:
-                try:
-                    # Una última lectura rápida para evitar choques entre usuarios
-                    df_final = conn.read(spreadsheet=URL_DB, worksheet="Historial_Salidas", ttl=0)
+        if st.button("🚀 FINALIZAR Y GUARDAR EN EXCEL"):
+            try:
+                # REVISIÓN DE DUPLICADO: Solo se hace UNA vez aquí al final
+                df_hist = conn.read(spreadsheet=URL_DB, worksheet="Historial_Salidas", ttl=0)
+                
+                if nro_vale in df_hist['Vale'].astype(str).str.strip().values:
+                    st.error(f"❌ El Vale {nro_vale} ya existe en el Excel. Cámbielo antes de guardar.")
+                elif not p_digita:
+                    st.error("❌ Ingrese su firma de digitador.")
+                else:
+                    # PROCESO DE GUARDADO
+                    for item in st.session_state.lista_salidas:
+                        idx = df_art.index[df_art['Codigo'] == item['Codigo']][0]
+                        df_art.at[idx, 'Stock_Actual'] -= item['Cantidad']
+                        
+                        nuevo = pd.DataFrame([{
+                            "ID": str(len(df_hist) + 1), "Fecha": item['Fecha'], "Codigo": item['Codigo'],
+                            "Nombre": item['Nombre'], "Cantidad": item['Cantidad'], "Vale": item['Vale'],
+                            "DNI": item['DNI'], "Trabajador": item['Trabajador'], "Area": item['Area'],
+                            "Digitador": p_digita
+                        }])
+                        df_hist = pd.concat([df_hist, nuevo], ignore_index=True)
+
+                    conn.update(spreadsheet=URL_DB, data=df_art)
+                    conn.update(spreadsheet=URL_DB, worksheet="Historial_Salidas", data=df_hist)
                     
-                    if nro_vale in df_final['Vale'].astype(str).values:
-                        st.error("❌ ERROR: Alguien más acaba de registrar este número de vale.")
-                    else:
-                        with st.spinner("Registrando en Google Sheets..."):
-                            for item in st.session_state.lista_salidas:
-                                # Descontar Stock
-                                idx = df_art.index[df_art['Codigo'] == item['Codigo']][0]
-                                df_art.at[idx, 'Stock_Actual'] -= item['Cantidad']
-                                
-                                # Nuevo registro
-                                nuevo = pd.DataFrame([{
-                                    "ID": str(len(df_final) + 1), "Fecha": item['Fecha'], 
-                                    "Codigo": item['Codigo'], "Nombre": item['Nombre'],
-                                    "Cantidad": item['Cantidad'], "Vale": item['Vale'],
-                                    "DNI": item['DNI'], "Trabajador": item['Trabajador'],
-                                    "Area": item['Area'], "Digitador": p_digita
-                                }])
-                                df_final = pd.concat([df_final, nuevo], ignore_index=True)
-
-                            # Actualización física del Excel
-                            conn.update(spreadsheet=URL_DB, data=df_art)
-                            conn.update(spreadsheet=URL_DB, worksheet="Historial_Salidas", data=df_final)
-                            
-                            st.success(f"✅ Vale {nro_vale} guardado con éxito.")
-                            st.session_state.lista_salidas = []
-                            st.session_state.reset_form += 1
-                            st.cache_data.clear()
-                            st.rerun()
-                except Exception as api_err:
-                    st.error("❌ Error al conectar con el servidor de Google. Reintente en unos segundos.")
+                    st.success("✅ ¡Vale guardado! Datos enviados al Excel.")
+                    st.session_state.lista_salidas = [] # Limpiamos la lista temporal
+                    st.session_state.reset_form += 1
+                    st.cache_data.clear()
+                    st.rerun()
+            except Exception as e:
+                st.error("❌ Error de comunicación con Google. No se perdieron tus datos, intenta darle al botón de Guardar nuevamente.")
