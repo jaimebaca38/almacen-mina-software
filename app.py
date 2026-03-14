@@ -202,7 +202,7 @@ elif opcion == "Entradas (OC)":
             if c_b2.button("🗑️ Limpiar Lista"):
                 st.session_state.lista_temporal_ingresos = []
                 st.rerun()
-# --- MODULO 4: SALIDAS (VALES) - LIMPIEZA INTELIGENTE DE DOS NIVELES ---
+# --- MODULO 4: SALIDAS (VALES) - CON BLOQUEO DE DUPLICADOS ---
 elif opcion == "Salidas (Vales)":
     st.header("📤 Despacho de Materiales (Vales)")
     
@@ -212,19 +212,18 @@ elif opcion == "Salidas (Vales)":
     except:
         df_salidas = pd.DataFrame(columns=["ID", "Fecha", "Codigo", "Nombre", "Cantidad", "Vale", "DNI", "Trabajador", "Area", "Digitador"])
 
-    # 1. INICIALIZAR ESTADOS DE SESIÓN
+    # 1. INICIALIZAR ESTADOS
     if 'lista_salidas' not in st.session_state:
         st.session_state.lista_salidas = []
     if 'reset_trabajador' not in st.session_state:
-        st.session_state.reset_trabajador = 0  # Para limpiar DNI/Nombre/Vale
+        st.session_state.reset_trabajador = 0
     if 'reset_articulo' not in st.session_state:
-        st.session_state.reset_articulo = 0    # Para limpiar solo el buscador de items
+        st.session_state.reset_articulo = 0
 
-    # Variables de control de llaves (keys)
     rt = st.session_state.reset_trabajador
     ra = st.session_state.reset_articulo
 
-    # 2. DATOS DEL TRABAJADOR (Nivel de reseteo: rt)
+    # 2. DATOS DEL TRABAJADOR
     st.subheader("Información del Despacho")
     c1, c2, c3 = st.columns(3)
     nro_vale = c1.text_input("N° de Vale*", key=f"v_nro_{rt}").upper().strip()
@@ -232,54 +231,59 @@ elif opcion == "Salidas (Vales)":
     nom_trab = c3.text_input("Nombre del Trabajador*", key=f"v_nom_{rt}").upper().strip()
     area_trab = st.selectbox("Área / Proyecto:", ["OPERACIONES", "MANTENIMIENTO", "SEGURIDAD", "LOGÍSTICA", "OTRO"], key=f"v_area_{rt}")
 
-    # Validación de duplicado
+    # VALIDACIÓN VISUAL INMEDIATA
+    vale_duplicado = False
     if nro_vale and not df_salidas.empty:
         if nro_vale in df_salidas['Vale'].astype(str).values:
-            st.error(f"⚠️ EL VALE N° {nro_vale} YA EXISTE.")
-            st.stop()
+            st.error(f"⚠️ BLOQUEO: El Vale N° {nro_vale} ya existe en el historial.")
+            vale_duplicado = True
 
     st.divider()
     
-    # 3. SELECCIÓN DE PRODUCTOS (Nivel de reseteo: ra)
+    # 3. SELECCIÓN DE PRODUCTOS
     st.subheader("Artículos a Entregar")
     opciones = ["Seleccione..."] + (df_art['Codigo'] + " - " + df_art['Nombre'] + " (Stock: " + df_art['Stock_Actual'].astype(str) + ")").tolist()
     
-    # Esta llave cambia cada vez que das clic en "Agregar"
     seleccion = st.selectbox("Buscar Artículo:", opciones, key=f"art_sel_{ra}")
     cant_salida = st.number_input("Cantidad a Entregar", min_value=1, step=1, key=f"cant_val_{ra}")
     
     if st.button("➕ AGREGAR AL VALE"):
-        if seleccion != "Seleccione..." and nro_vale and nom_trab:
+        if vale_duplicado:
+            st.error("No puedes agregar artículos a un vale duplicado.")
+        elif seleccion != "Seleccione..." and nro_vale and nom_trab:
             cod = seleccion.split(" - ")[0]
             nom = seleccion.split(" - ")[1].split(" (")[0]
             stock_disp = int(df_art.loc[df_art['Codigo'] == cod, 'Stock_Actual'].values[0])
             
             if cant_salida > stock_disp:
-                st.warning(f"❌ Stock insuficiente en sistema (Disponible: {stock_disp}).")
+                st.warning(f"❌ Stock insuficiente (Disponible: {stock_disp}).")
             else:
                 st.session_state.lista_salidas.append({
                     "Codigo": cod, "Nombre": nom, "Cantidad": cant_salida,
                     "Vale": nro_vale, "DNI": dni_trab, "Trabajador": nom_trab,
                     "Area": area_trab, "Fecha": pd.to_datetime("today").strftime("%d/%m/%Y")
                 })
-                # ACCIÓN: Limpiar SOLO artículo y cantidad
                 st.session_state.reset_articulo += 1
                 st.rerun() 
         else:
-            st.warning("⚠️ Debes llenar los datos del trabajador y elegir un artículo.")
+            st.warning("⚠️ Completa los datos del trabajador y del artículo.")
 
-    # 4. TABLA Y CIERRE FINAL
+    # 4. CIERRE DE VALE
     if st.session_state.lista_salidas:
-        st.write("### Artículos agregados al vale:")
+        st.write("### Vista Previa del Vale:")
         st.table(pd.DataFrame(st.session_state.lista_salidas)[["Codigo", "Nombre", "Cantidad"]])
         
-        # Digitador también se limpia con el trabajador al final
         p_digita = st.text_input("Personal que entrega (Digitador):", key=f"v_dig_{rt}").upper().strip()
 
         col_f1, col_f2 = st.columns([1, 4])
         if col_f1.button("🚀 FINALIZAR VALE"):
-            if p_digita:
-                # Guardado en historial y descuento de stock
+            # DOBLE VERIFICACIÓN DE SEGURIDAD ANTES DE GUARDAR
+            if vale_duplicado:
+                st.error("❌ ERROR CRÍTICO: El número de vale ya fue usado. Cambia el N° de Vale para guardar.")
+            elif not p_digita:
+                st.error("❌ Indica quién entrega el material.")
+            else:
+                # Proceso de guardado masivo
                 for item in st.session_state.lista_salidas:
                     idx = df_art.index[df_art['Codigo'] == item['Codigo']][0]
                     df_art.at[idx, 'Stock_Actual'] -= item['Cantidad']
@@ -296,16 +300,14 @@ elif opcion == "Salidas (Vales)":
                 conn.update(spreadsheet=URL_DB, data=df_art)
                 conn.update(spreadsheet=URL_DB, worksheet="Historial_Salidas", data=df_salidas)
                 
-                st.success(f"✅ Vale {nro_vale} procesado. Inventario actualizado.")
+                st.success(f"✅ Vale {nro_vale} procesado y formulario limpiado.")
                 
-                # ACCIÓN: Limpiar TODO
+                # REINICIO TOTAL
                 st.session_state.lista_salidas = []
                 st.session_state.reset_trabajador += 1
                 st.session_state.reset_articulo += 1
                 st.cache_data.clear()
                 st.rerun()
-            else:
-                st.error("❌ Indica el nombre del Digitador.")
 
         if col_f2.button("🗑️ Cancelar Vale"):
             st.session_state.lista_salidas = []
