@@ -202,23 +202,101 @@ elif opcion == "Entradas (OC)":
             if c_b2.button("🗑️ Limpiar Lista"):
                 st.session_state.lista_temporal_ingresos = []
                 st.rerun()
-# --- MODULO 4: SALIDAS (RESTA) ---
+# --- MODULO 4: SALIDAS (VALES) - DESPACHO MULTIBULTO ---
 elif opcion == "Salidas (Vales)":
-    st.header("📋 Salida por Vale")
+    st.header("📤 Despacho de Materiales (Vales)")
+    
     df_art = conn.read(spreadsheet=URL_DB)
-    df_sal = conn.read(spreadsheet=URL_DB + "&sheet=Salidas")
-    with st.form("sal"):
-        vale = st.text_input("Vale").upper()
-        tra = st.text_input("Trabajador").upper()
-        art = st.selectbox("Artículo", df_art['Nombre'].tolist())
-        cant = st.number_input("Cantidad", 1)
-        if st.form_submit_button("Despachar"):
-            idx = df_art[df_art['Nombre'] == art].index[0]
-            if df_art.at[idx, 'Stock_Actual'] >= cant:
-                df_art.at[idx, 'Stock_Actual'] -= cant
-                nueva = pd.DataFrame([{"Fecha":"Hoy", "Vale":vale, "Trabajador":tra, "Codigo":df_art.at[idx, 'Codigo'], "Cantidad":cant, "Usuario":"SISTEMA"}])
-                conn.update(spreadsheet=URL_DB, worksheet="Articulos", data=df_art)
-                conn.update(spreadsheet=URL_DB, worksheet="Salidas", data=pd.concat([df_sal, nueva]))
-                st.success("Despachado")
+    try:
+        df_salidas = conn.read(spreadsheet=URL_DB, worksheet="Historial_Salidas")
+    except:
+        df_salidas = pd.DataFrame(columns=["ID", "Fecha", "Codigo", "Nombre", "Cantidad", "Vale", "DNI", "Trabajador", "Area", "Digitador"])
+
+    # Inicializar lista temporal de despacho
+    if 'lista_salidas' not in st.session_state:
+        st.session_state.lista_salidas = []
+
+    # 1. DATOS DEL VALE Y TRABAJADOR
+    st.subheader("Información del Despacho")
+    c1, c2, c3 = st.columns(3)
+    nro_vale = c1.text_input("N° de Vale*").upper().strip()
+    dni_trab = c2.text_input("DNI del Trabajador*").strip()
+    nom_trab = c3.text_input("Nombre del Trabajador*").upper().strip()
+    
+    area_trab = st.selectbox("Área / Proyecto:", ["OPERACIONES", "MANTENIMIENTO", "SEGURIDAD", "LOGÍSTICA", "OTRO"])
+
+    # --- VALIDACIÓN DE VALE DUPLICADO ---
+    if nro_vale and not df_salidas.empty:
+        if nro_vale in df_salidas['Vale'].astype(str).values:
+            st.error(f"⚠️ EL VALE N° {nro_vale} YA FUE REGISTRADO. Use un número correlativo nuevo.")
+            st.stop()
+
+    st.divider()
+    
+    # 2. SELECCIÓN DE PRODUCTOS
+    st.subheader("Artículos a Entregar")
+    opciones = ["Seleccione..."] + (df_art['Codigo'] + " - " + df_art['Nombre'] + " (Stock: " + df_art['Stock_Actual'].astype(str) + ")").tolist()
+    seleccion = st.selectbox("Buscar Artículo:", opciones, key="sel_salida")
+    
+    ca, cb = st.columns(2)
+    cant_salida = ca.number_input("Cantidad a Entregar", min_value=1, step=1)
+    
+    if st.button("➕ AGREGAR AL VALE"):
+        if seleccion != "Seleccione..." and nro_vale and nom_trab:
+            cod = seleccion.split(" - ")[0]
+            nom = seleccion.split(" - ")[1].split(" (")[0]
+            
+            # Verificar si hay stock suficiente antes de agregar a la lista
+            stock_disp = int(df_art.loc[df_art['Codigo'] == cod, 'Stock_Actual'].values[0])
+            
+            if cant_salida > stock_disp:
+                st.warning(f"❌ Stock insuficiente. Solo quedan {stock_disp} unidades.")
             else:
-                st.error("No hay suficiente stock")
+                st.session_state.lista_salidas.append({
+                    "Codigo": cod, "Nombre": nom, "Cantidad": cant_salida,
+                    "Vale": nro_vale, "DNI": dni_trab, "Trabajador": nom_trab,
+                    "Area": area_trab, "Fecha": pd.to_datetime("today").strftime("%d/%m/%Y")
+                })
+        else:
+            st.warning("⚠️ Complete los datos del trabajador y seleccione un artículo.")
+
+    # 3. VISUALIZACIÓN Y REGISTRO FINAL
+    if st.session_state.lista_salidas:
+        st.write("### Vista Previa del Vale:")
+        st.table(pd.DataFrame(st.session_state.lista_salidas)[["Codigo", "Nombre", "Cantidad"]])
+        
+        p_digita = st.text_input("Personal que entrega (Digitador):").upper().strip()
+
+        col_f1, col_f2 = st.columns([1, 4])
+        if col_f1.button("🚀 FINALIZAR VALE"):
+            if p_digita:
+                # PROCESO DE DESCUENTO DE STOCK Y REGISTRO
+                for item in st.session_state.lista_salidas:
+                    # Restar del Stock
+                    idx = df_art.index[df_art['Codigo'] == item['Codigo']][0]
+                    df_art.at[idx, 'Stock_Actual'] -= item['Cantidad']
+                    
+                    # Agregar al historial de salidas
+                    nuevo_reg = pd.DataFrame([{
+                        "ID": str(len(df_salidas) + 1), "Fecha": item['Fecha'],
+                        "Codigo": item['Codigo'], "Nombre": item['Nombre'],
+                        "Cantidad": item['Cantidad'], "Vale": item['Vale'],
+                        "DNI": item['DNI'], "Trabajador": item['Trabajador'],
+                        "Area": item['Area'], "Digitador": p_digita
+                    }])
+                    df_salidas = pd.concat([df_salidas, nuevo_reg], ignore_index=True)
+
+                # Guardar en Excel
+                conn.update(spreadsheet=URL_DB, data=df_art)
+                conn.update(spreadsheet=URL_DB, worksheet="Historial_Salidas", data=df_salidas)
+                
+                st.success(f"✅ Vale N° {nro_vale} procesado. Stock actualizado.")
+                st.session_state.lista_salidas = []
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.error("❌ Indique quién está realizando la entrega.")
+
+        if col_f2.button("🗑️ Cancelar Vale"):
+            st.session_state.lista_salidas = []
+            st.rerun()
